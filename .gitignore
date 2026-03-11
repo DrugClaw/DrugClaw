@@ -1,0 +1,41 @@
+# macOS / Windows noise
+.DS_Store
+Thumbs.db
+
+# Editor / local agent state
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Rust build outputs
+/target/
+/gui/src-tauri/target/
+*.dSYM/
+
+# JavaScript / frontend dependencies and build outputs
+/web/node_modules/
+/website/node_modules/
+/gui/node_modules/
+/web/dist/
+/gui/dist/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+# Logs / caches
+*.log
+.cache/
+__pycache__/
+*.py[cod]
+*.backup
+
+# Website is published from a dedicated GitHub Pages branch
+/website/

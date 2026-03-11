@@ -1,0 +1,61 @@
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    background:
+      radial-gradient(circle at 20% 0%, rgba(34, 197, 94, 0.14), transparent 45%),
+      radial-gradient(circle at 85% 100%, rgba(16, 185, 129, 0.12), transparent 40%),
+      linear-gradient(145deg, #010201 0%, #050806 48%, #000000 100%);
+    color: #f4f4f5;
+    font-family: "Inter", "SF Pro Display", "Segoe UI", sans-serif;
+    background-attachment: fixed;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #15803d #09090b;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: #09090b;
+    border-radius: 4px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: #15803d;
+    border-radius: 4px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: #16a34a;
+  }
+
+  /* 优化 select 下拉框样式 */
+  select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='%2371717a' d='M4.5 6l3.5 3.5L11.5 6z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    padding-right: 2.5rem;
+  }
+
+  select:focus {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='%2322c55e' d='M4.5 6l3.5 3.5L11.5 6z'/%3E%3C/svg%3E");
+  }
+
+  select option {
+    background: #09090b;
+    color: #f4f4f5;
+    padding: 0.5rem;
+  }
+}

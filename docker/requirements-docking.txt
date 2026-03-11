@@ -1,0 +1,6 @@
+beautifulsoup4~=4.14.3
+openmm~=8.5.0b0
+pdbfixer>=1.10,<2
+pillow~=11.3.0
+psutil~=7.0.0
+rsa~=4.9

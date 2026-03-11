@@ -1,0 +1,272 @@
+use std::sync::Arc;
+
+use crate::channel_adapter::ChannelRegistry;
+use drugclaw_storage::db::{call_blocking, Database, StoredMessage};
+
+#[derive(Clone, Debug)]
+struct ToolAuthContext {
+    caller_chat_id: i64,
+}
+
+fn auth_context_from_input(input: &serde_json::Value) -> Option<ToolAuthContext> {
+    let ctx = input.get("__drugclaw_auth")?;
+    let caller_chat_id = ctx.get("caller_chat_id")?.as_i64()?;
+    Some(ToolAuthContext { caller_chat_id })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversationKind {
+    Private,
+    Group,
+}
+
+impl ConversationKind {
+    pub fn as_agent_chat_type(self) -> &'static str {
+        match self {
+            ConversationKind::Private => "private",
+            ConversationKind::Group => "group",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatRouting {
+    pub channel_name: String,
+    pub conversation: ConversationKind,
+}
+
+pub fn parse_chat_routing(registry: &ChannelRegistry, db_chat_type: &str) -> Option<ChatRouting> {
+    let (channel_name, kind) = registry.resolve_routing(db_chat_type)?;
+    Some(ChatRouting {
+        channel_name: channel_name.to_string(),
+        conversation: kind,
+    })
+}
+
+fn infer_channel_from_chat_type(chat_type: &str) -> Option<&'static str> {
+    if chat_type.starts_with("telegram_") {
+        return Some("telegram");
+    }
+    if chat_type.starts_with("discord_") {
+        return Some("discord");
+    }
+    if chat_type.starts_with("slack_") {
+        return Some("slack");
+    }
+    if chat_type.starts_with("feishu_") {
+        return Some("feishu");
+    }
+    if chat_type.starts_with("matrix_") {
+        return Some("matrix");
+    }
+    if chat_type.starts_with("whatsapp_") {
+        return Some("whatsapp");
+    }
+    if chat_type.starts_with("imessage_") {
+        return Some("imessage");
+    }
+    if chat_type.starts_with("email_") {
+        return Some("email");
+    }
+    if chat_type.starts_with("nostr_") {
+        return Some("nostr");
+    }
+    if chat_type.starts_with("signal_") {
+        return Some("signal");
+    }
+    if chat_type.starts_with("dingtalk_") {
+        return Some("dingtalk");
+    }
+    if chat_type.starts_with("qq_") {
+        return Some("qq");
+    }
+    if chat_type.starts_with("irc_") {
+        return Some("irc");
+    }
+    None
+}
+
+pub async fn get_chat_type_raw(db: Arc<Database>, chat_id: i64) -> Result<Option<String>, String> {
+    call_blocking(db, move |d| d.get_chat_type(chat_id))
+        .await
+        .map_err(|e| format!("Failed to read chat type for chat {chat_id}: {e}"))
+}
+
+pub async fn get_chat_channel_raw(
+    db: Arc<Database>,
+    chat_id: i64,
+) -> Result<Option<String>, String> {
+    call_blocking(db, move |d| d.get_chat_channel(chat_id))
+        .await
+        .map_err(|e| format!("Failed to read chat channel for chat {chat_id}: {e}"))
+}
+
+pub async fn get_chat_routing(
+    registry: &ChannelRegistry,
+    db: Arc<Database>,
+    chat_id: i64,
+) -> Result<Option<ChatRouting>, String> {
+    let chat_type = get_chat_type_raw(db.clone(), chat_id).await?;
+    let Some(chat_type) = chat_type else {
+        return Ok(None);
+    };
+
+    let kind = registry
+        .resolve_routing(&chat_type)
+        .map(|(_, k)| k)
+        .unwrap_or(ConversationKind::Group);
+
+    if let Some(channel_name) = get_chat_channel_raw(db, chat_id).await? {
+        let normalized = channel_name.trim();
+        if !normalized.is_empty() && registry.get(normalized).is_some() {
+            return Ok(Some(ChatRouting {
+                channel_name: normalized.to_string(),
+                conversation: kind,
+            }));
+        }
+    }
+
+    Ok(parse_chat_routing(registry, &chat_type))
+}
+
+pub async fn get_required_chat_routing(
+    registry: &ChannelRegistry,
+    db: Arc<Database>,
+    chat_id: i64,
+) -> Result<ChatRouting, String> {
+    let chat_type = get_chat_type_raw(db.clone(), chat_id)
+        .await?
+        .ok_or_else(|| format!("target chat {chat_id} not found"))?;
+    if let Some(routing) = get_chat_routing(registry, db.clone(), chat_id).await? {
+        return Ok(routing);
+    }
+
+    let hinted_channel = get_chat_channel_raw(db, chat_id)
+        .await?
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| infer_channel_from_chat_type(&chat_type).map(ToOwned::to_owned));
+
+    if let Some(channel_name) = hinted_channel {
+        if registry.get(&channel_name).is_none() {
+            return Err(format!(
+                "channel '{channel_name}' is not enabled for chat {chat_id} (chat_type='{chat_type}')"
+            ));
+        }
+    }
+
+    Err(format!(
+        "unsupported chat type '{chat_type}' for chat {chat_id}"
+    ))
+}
+
+pub fn session_source_for_chat(
+    registry: &ChannelRegistry,
+    chat_type: &str,
+    chat_title: Option<&str>,
+) -> String {
+    // Legacy discord detection: some old records have generic types like "private"
+    // but a title starting with "discord-"
+    if matches!(chat_type, "private" | "group" | "supergroup" | "channel")
+        && chat_title.is_some_and(|t| t.starts_with("discord-"))
+    {
+        return "discord".to_string();
+    }
+
+    if let Some((channel_name, _)) = registry.resolve_routing(chat_type) {
+        return channel_name.to_string();
+    }
+
+    chat_type.to_string()
+}
+
+pub async fn is_web_chat(registry: &ChannelRegistry, db: Arc<Database>, chat_id: i64) -> bool {
+    get_chat_routing(registry, db, chat_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|r| r.channel_name == "web")
+        .unwrap_or(false)
+}
+
+pub async fn enforce_channel_policy(
+    registry: &ChannelRegistry,
+    db: Arc<Database>,
+    input: &serde_json::Value,
+    target_chat_id: i64,
+) -> Result<(), String> {
+    let Some(auth) = auth_context_from_input(input) else {
+        return Ok(());
+    };
+
+    // Check if the caller's channel disallows cross-chat operations
+    if let Ok(Some(routing)) = get_chat_routing(registry, db.clone(), auth.caller_chat_id).await {
+        if let Some(adapter) = registry.get(&routing.channel_name) {
+            if !adapter.allows_cross_chat() && auth.caller_chat_id != target_chat_id {
+                return Err(format!(
+                    "Permission denied: {} chats cannot operate on other chats",
+                    routing.channel_name
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn deliver_and_store_bot_message(
+    registry: &ChannelRegistry,
+    db: Arc<Database>,
+    bot_username: &str,
+    chat_id: i64,
+    text: &str,
+) -> Result<(), String> {
+    let routing = get_required_chat_routing(registry, db.clone(), chat_id).await?;
+    let external_chat_id = call_blocking(db.clone(), move |d| d.get_chat_external_id(chat_id))
+        .await
+        .map_err(|e| format!("Failed to read external chat id for chat {chat_id}: {e}"))?
+        .unwrap_or_else(|| chat_id.to_string());
+
+    if let Some(adapter) = registry.get(&routing.channel_name) {
+        if !adapter.is_local_only() {
+            adapter.send_text(&external_chat_id, text).await?;
+        }
+    } else {
+        return Err(format!(
+            "No adapter registered for channel '{}'",
+            routing.channel_name
+        ));
+    }
+
+    let msg = StoredMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        chat_id,
+        sender_name: bot_username.to_string(),
+        content: text.to_string(),
+        is_from_bot: true,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    };
+    call_blocking(db.clone(), move |d| d.store_message(&msg))
+        .await
+        .map_err(|e| format!("Failed to store sent message: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::infer_channel_from_chat_type;
+
+    #[test]
+    fn test_infer_channel_from_prefixed_chat_type() {
+        assert_eq!(
+            infer_channel_from_chat_type("telegram_private"),
+            Some("telegram")
+        );
+        assert_eq!(infer_channel_from_chat_type("discord_dm"), Some("discord"));
+    }
+
+    #[test]
+    fn test_infer_channel_from_unknown_chat_type() {
+        assert_eq!(infer_channel_from_chat_type("private"), None);
+        assert_eq!(infer_channel_from_chat_type("group"), None);
+    }
+}

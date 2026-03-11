@@ -1,0 +1,38 @@
+<svg width="1200" height="620" viewBox="0 0 1200 620" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="sbg" x1="0" y1="0" x2="1200" y2="620" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F97316"/>
+      <stop offset="0.48" stop-color="#EF4444"/>
+      <stop offset="1" stop-color="#EC4899"/>
+    </linearGradient>
+    <marker id="sarrow" markerWidth="12" markerHeight="12" refX="8" refY="6" orient="auto">
+      <path d="M1 1L9 6L1 11" stroke="#1F2937" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="620" rx="28" fill="url(#sbg)"/>
+  <rect x="92" y="92" width="1016" height="436" rx="30" fill="#FFF7ED" fill-opacity="0.94"/>
+
+  <text x="140" y="152" fill="#7C2D12" font-size="36" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Skill Activation Lifecycle</text>
+
+  <rect x="144" y="212" width="262" height="230" rx="22" fill="#FFEDD5"/>
+  <text x="190" y="268" fill="#9A3412" font-size="28" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Discover</text>
+  <text x="170" y="306" fill="#9A3412" font-size="21" font-family="Segoe UI, Arial, sans-serif">scan SKILL.md metadata</text>
+  <text x="170" y="338" fill="#9A3412" font-size="21" font-family="Segoe UI, Arial, sans-serif">name + description</text>
+
+  <rect x="470" y="212" width="262" height="230" rx="22" fill="#FEE2E2"/>
+  <text x="530" y="268" fill="#B91C1C" font-size="28" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Activate</text>
+  <text x="500" y="306" fill="#B91C1C" font-size="21" font-family="Segoe UI, Arial, sans-serif">tool call activates skill</text>
+  <text x="500" y="338" fill="#B91C1C" font-size="21" font-family="Segoe UI, Arial, sans-serif">full instructions loaded</text>
+
+  <rect x="796" y="212" width="262" height="230" rx="22" fill="#FCE7F3"/>
+  <text x="864" y="268" fill="#9D174D" font-size="28" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Apply</text>
+  <text x="828" y="306" fill="#9D174D" font-size="21" font-family="Segoe UI, Arial, sans-serif">execute domain workflow</text>
+  <text x="828" y="338" fill="#9D174D" font-size="21" font-family="Segoe UI, Arial, sans-serif">better task completion</text>
+
+  <path d="M408 326H468" stroke="#1F2937" stroke-width="3" marker-end="url(#sarrow)"/>
+  <path d="M734 326H794" stroke="#1F2937" stroke-width="3" marker-end="url(#sarrow)"/>
+
+  <rect x="312" y="470" width="576" height="62" rx="18" fill="#FEF3C7"/>
+  <text x="366" y="510" fill="#92400E" font-size="24" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Lean prompt by default, deep context on demand</text>
+</svg>

@@ -1,0 +1,10 @@
+{
+  "defaultProtocolVersion": "2025-11-05",
+  "mcpServers": {
+    "filesystem": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    }
+  }
+}

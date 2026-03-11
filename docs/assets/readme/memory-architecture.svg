@@ -1,0 +1,40 @@
+<svg width="1200" height="620" viewBox="0 0 1200 620" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgm" x1="0" y1="0" x2="1200" y2="620" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#14B8A6"/>
+      <stop offset="0.5" stop-color="#0EA5E9"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <filter id="mshadow" x="76" y="84" width="1048" height="456" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#0F172A" flood-opacity="0.2"/>
+    </filter>
+    <marker id="marrow" markerWidth="12" markerHeight="12" refX="8" refY="6" orient="auto">
+      <path d="M1 1L9 6L1 11" stroke="#0F172A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="620" rx="28" fill="url(#bgm)"/>
+  <g filter="url(#mshadow)">
+    <rect x="100" y="100" width="1000" height="420" rx="28" fill="#F8FAFC" fill-opacity="0.92"/>
+  </g>
+
+  <text x="140" y="154" fill="#0F172A" font-size="36" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Dual Memory Architecture</text>
+
+  <rect x="146" y="194" width="430" height="286" rx="24" fill="#ECFEFF"/>
+  <text x="184" y="242" fill="#0F766E" font-size="30" font-weight="700" font-family="Segoe UI, Arial, sans-serif">File Memory</text>
+  <text x="184" y="286" fill="#115E59" font-size="22" font-family="Segoe UI, Arial, sans-serif">runtime/groups/AGENTS.md</text>
+  <text x="184" y="324" fill="#115E59" font-size="22" font-family="Segoe UI, Arial, sans-serif">chat-scoped AGENTS.md</text>
+  <text x="184" y="362" fill="#115E59" font-size="22" font-family="Segoe UI, Arial, sans-serif">human-readable notes</text>
+
+  <rect x="624" y="194" width="430" height="286" rx="24" fill="#EEF2FF"/>
+  <text x="662" y="242" fill="#3730A3" font-size="30" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Structured Memory</text>
+  <text x="662" y="286" fill="#312E81" font-size="22" font-family="Segoe UI, Arial, sans-serif">SQLite memories table</text>
+  <text x="662" y="324" fill="#312E81" font-size="22" font-family="Segoe UI, Arial, sans-serif">confidence + lifecycle</text>
+  <text x="662" y="362" fill="#312E81" font-size="22" font-family="Segoe UI, Arial, sans-serif">reflector + dedup + retrieval</text>
+
+  <path d="M576 337H622" stroke="#0F172A" stroke-width="3" marker-end="url(#marrow)"/>
+  <path d="M624 408C560 472 458 472 394 430" stroke="#0F172A" stroke-width="3" stroke-dasharray="8 10" marker-end="url(#marrow)"/>
+
+  <rect x="418" y="520" width="364" height="56" rx="16" fill="#FEF9C3"/>
+  <text x="452" y="557" fill="#92400E" font-size="24" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Injected into every request</text>
+</svg>

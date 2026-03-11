@@ -1,0 +1,26 @@
+<svg width="1200" height="620" viewBox="0 0 1200 620" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="pbg" x1="0" y1="0" x2="1200" y2="620" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22C55E"/>
+      <stop offset="0.45" stop-color="#14B8A6"/>
+      <stop offset="1" stop-color="#06B6D4"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="620" rx="28" fill="url(#pbg)"/>
+  <rect x="92" y="90" width="1016" height="440" rx="30" fill="#F0FDFA" fill-opacity="0.93"/>
+
+  <text x="140" y="152" fill="#134E4A" font-size="36" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Plan and Execute Workflow</text>
+
+  <rect x="146" y="204" width="908" height="78" rx="18" fill="#D1FAE5"/>
+  <text x="184" y="252" fill="#065F46" font-size="26" font-weight="700" font-family="Segoe UI, Arial, sans-serif">1. Break complex request into ordered todo steps</text>
+
+  <rect x="146" y="300" width="908" height="78" rx="18" fill="#CCFBF1"/>
+  <text x="184" y="348" fill="#0F766E" font-size="26" font-weight="700" font-family="Segoe UI, Arial, sans-serif">2. Execute each step with tools and update status</text>
+
+  <rect x="146" y="396" width="908" height="78" rx="18" fill="#CFFAFE"/>
+  <text x="184" y="444" fill="#155E75" font-size="26" font-weight="700" font-family="Segoe UI, Arial, sans-serif">3. Persist progress so work can resume anytime</text>
+
+  <rect x="356" y="500" width="488" height="58" rx="16" fill="#FEF9C3"/>
+  <text x="392" y="538" fill="#854D0E" font-size="24" font-weight="700" font-family="Segoe UI, Arial, sans-serif">TODO.json keeps the plan stateful</text>
+</svg>

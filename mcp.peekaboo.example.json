@@ -1,0 +1,10 @@
+{
+  "defaultProtocolVersion": "2025-11-05",
+  "mcpServers": {
+    "peekaboo": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "peekaboo-mcp@latest"]
+    }
+  }
+}

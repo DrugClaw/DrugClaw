@@ -1,0 +1,38 @@
+<svg width="1200" height="620" viewBox="0 0 1200 620" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="tbg" x1="0" y1="0" x2="1200" y2="620" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A855F7"/>
+      <stop offset="0.45" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </linearGradient>
+    <marker id="tarrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M1 1L6 4L1 7" stroke="#1E1B4B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="620" rx="28" fill="url(#tbg)"/>
+  <rect x="92" y="92" width="1016" height="436" rx="30" fill="#EEF2FF" fill-opacity="0.93"/>
+
+  <text x="140" y="152" fill="#312E81" font-size="36" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Natural Language Scheduler</text>
+
+  <rect x="140" y="206" width="292" height="236" rx="24" fill="#EDE9FE"/>
+  <text x="182" y="262" fill="#5B21B6" font-size="30" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Create</text>
+  <text x="168" y="302" fill="#6D28D9" font-size="21" font-family="Segoe UI, Arial, sans-serif">"Every 30 minutes..."</text>
+  <text x="168" y="334" fill="#6D28D9" font-size="21" font-family="Segoe UI, Arial, sans-serif">or one-time reminder</text>
+
+  <rect x="454" y="206" width="292" height="236" rx="24" fill="#DBEAFE"/>
+  <text x="506" y="262" fill="#1D4ED8" font-size="30" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Schedule</text>
+  <text x="482" y="302" fill="#1E40AF" font-size="21" font-family="Segoe UI, Arial, sans-serif">cron expression stored</text>
+  <text x="482" y="334" fill="#1E40AF" font-size="21" font-family="Segoe UI, Arial, sans-serif">polling every 60s</text>
+
+  <rect x="768" y="206" width="292" height="236" rx="24" fill="#CFFAFE"/>
+  <text x="828" y="262" fill="#0E7490" font-size="30" font-weight="700" font-family="Segoe UI, Arial, sans-serif">Deliver</text>
+  <text x="798" y="302" fill="#155E75" font-size="21" font-family="Segoe UI, Arial, sans-serif">run agent loop</text>
+  <text x="798" y="334" fill="#155E75" font-size="21" font-family="Segoe UI, Arial, sans-serif">send result to chat</text>
+
+  <path d="M432 324H452" stroke="#1E1B4B" stroke-width="3" marker-end="url(#tarrow)"/>
+  <path d="M746 324H766" stroke="#1E1B4B" stroke-width="3" marker-end="url(#tarrow)"/>
+
+  <rect x="336" y="476" width="528" height="58" rx="16" fill="#FEF3C7"/>
+  <text x="376" y="514" fill="#92400E" font-size="24" font-weight="700" font-family="Segoe UI, Arial, sans-serif">List, pause, resume, cancel with plain language</text>
+</svg>

@@ -1,0 +1,18 @@
+{
+  "defaultProtocolVersion": "2024-11-05",
+  "mcpServers": {
+    "filesystem": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    },
+    "remote": {
+      "transport": "streamable_http",
+      "endpoint": "http://127.0.0.1:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer REPLACE_ME"
+      },
+      "request_timeout_secs": 60
+    }
+  }
+}

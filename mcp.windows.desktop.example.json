@@ -1,0 +1,18 @@
+{
+  "defaultProtocolVersion": "2025-11-05",
+  "mcpServers": {
+    "pywinauto": {
+      "transport": "stdio",
+      "command": "python",
+      "args": ["-m", "pywinauto_mcp.main"]
+    },
+    "playwright": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest", "--extension"],
+      "env": {
+        "PLAYWRIGHT_MCP_EXTENSION_TOKEN": "<your-token-here>"
+      }
+    }
+  }
+}
