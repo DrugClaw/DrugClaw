@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DrugClaw · AI Research Assistant for Accelerated Drug Discovery.</title>
+  <meta
+    id="meta-description"
+    name="description"
+    content="DrugClaw is a Rust multi-channel agent runtime for accelerated drug-discovery research, with tool use, memory, Web UI, hooks, and built-in science skills."
+  >
+  <link rel="canonical" href="https://drugclaw.com">
+
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://drugclaw.com">
+  <meta
+    id="og-title"
+    property="og:title"
+    content="DrugClaw · AI Research Assistant for Accelerated Drug Discovery."
+  >
+  <meta
+    id="og-description"
+    property="og:description"
+    content="A Rust multi-channel agent runtime for accelerated drug-discovery research."
+  >
+  <meta property="og:image" content="https://drugclaw.com/static/logo.png">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:url" content="https://drugclaw.com">
+  <meta
+    id="twitter-title"
+    name="twitter:title"
+    content="DrugClaw · AI Research Assistant for Accelerated Drug Discovery."
+  >
+  <meta
+    id="twitter-description"
+    name="twitter:description"
+    content="Install DrugClaw locally and run tool-using drug-discovery research workflows with built-in science skills."
+  >
+  <meta name="twitter:image" content="https://drugclaw.com/static/logo.png">
+
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&amp;family=Noto+Sans+SC:wght@300;400;500;700;900&amp;family=Noto+Sans+TC:wght@300;400;500;700;900&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="css/style.css">
+
+  <style>
+    .nav-logo-word {
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 900;
+      font-size: 20px;
+      letter-spacing: 1px;
+      color: #f3fff7;
+    }
+
+    .hero-wordmark {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(44px, 8vw, 78px);
+      letter-spacing: 3px;
+      font-weight: 900;
+      margin-bottom: 18px;
+      color: #f5fff8;
+      text-shadow: 0 0 24px rgba(33, 197, 106, 0.32);
+      animation: fadeInUp 0.8s ease-out 0.2s both;
+    }
+
+    .lang-switcher {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 16px;
+      padding: 6px 10px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.03);
+    }
+
+    .lang-switcher label {
+      font-size: 12px;
+      color: rgba(255,255,255,0.72);
+      letter-spacing: 0.5px;
+    }
+
+    .lang-switcher select {
+      background: rgba(8, 18, 14, 0.95);
+      color: #f0fff6;
+      border: 1px solid rgba(79,224,143,0.45);
+      border-radius: 9px;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 8px;
+      outline: none;
+      min-width: 118px;
+    }
+
+    .footer-brand-name {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    @media (max-width: 900px) {
+      .lang-switcher {
+        margin-left: auto;
+      }
+
+      .lang-switcher label {
+        display: none;
+      }
+
+      .nav-logo-word {
+        font-size: 17px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="cursor-dot" id="cursorDot"></div>
+  <div class="cursor-ring" id="cursorRing"></div>
+  <div class="cursor-glow" id="cursorGlow"></div>
+
+  <div class="grid-bg"></div>
+  <div class="float-orb orb-1"></div>
+  <div class="float-orb orb-2"></div>
+  <div class="float-orb orb-3"></div>
+  <canvas id="particles-canvas"></canvas>
+
+  <nav id="navbar">
+    <a href="#home" class="nav-logo">
+      <img src="static/logo.png" alt="DrugClaw Logo" class="nav-logo-icon">
+      <span class="nav-logo-word">DrugClaw</span>
+    </a>
+
+    <div class="nav-links">
+      <a href="#features" data-i18n="nav_features"></a>
+      <a href="#how" data-i18n="nav_how"></a>
+      <a href="#install" data-i18n="nav_install"></a>
+      <a href="#demos" data-i18n="nav_demos"></a>
+      <a href="#testimonials" data-i18n="nav_reviews"></a>
+      <!-- <div class="nav-download-wrap">
+        <span class="nav-cta" data-i18n="nav_cta"></span>
+        <div class="nav-dropdown">
+          <a href="#install">
+            <i class="fa-solid fa-download"></i>
+            <span data-i18n="nav_drop_site"></span>
+          </a>
+          <a href="https://github.com/DrugClaw/DrugClaw" target="_blank" rel="noreferrer">
+            <i class="fa-brands fa-github"></i>
+            <span data-i18n="nav_drop_github"></span>
+          </a>
+        </div>
+      </div> -->
+    </div>
+
+    <div class="lang-switcher">
+      <label for="langSelect" data-i18n="lang_label"></label>
+      <select id="langSelect" aria-label="language selector">
+        <option value="zh-CN">简体中文</option>
+        <option value="zh-TW">繁體中文</option>
+        <option value="en">English</option>
+      </select>
+    </div>
+  </nav>
+
+  <section class="hero" id="home">
+    <div class="hero-glow"></div>
+    <div class="hero-badge">
+      <img src="static/logo.png" alt="DrugClaw" class="tencent-logo">
+      <span data-i18n="hero_badge"></span>
+    </div>
+
+    <img src="static/logo.png" alt="DrugClaw" class="hero-logo">
+    <h1 class="hero-wordmark" data-i18n="hero_wordmark"></h1>
+
+    <p class="hero-slogan" data-i18n="hero_slogan"></p>
+
+    <div class="hero-free-row">
+      <div class="hero-free-tag">
+        <i class="fa-solid fa-flask-vial"></i>
+        <span data-i18n="hero_free"></span>
+      </div>
+    </div>
+
+    <div class="hero-buttons" id="download">
+      <a href="#install" class="btn-download btn-mac">
+        <i class="fa-solid fa-download" style="font-size:18px;"></i>
+        <span data-i18n="hero_btn_site"></span>
+      </a>
+      <a href="https://github.com/DrugClaw/DrugClaw" class="btn-download btn-win" target="_blank" rel="noreferrer">
+        <i class="fa-brands fa-github" style="font-size:18px;"></i>
+        <span data-i18n="hero_btn_github"></span>
+      </a>
+      <a href="#capability" class="btn-download btn-docs">
+        <i class="fa-solid fa-book-open" style="border: #4FE08F; font-size:18px;color:#4FE08F;"></i>
+        <span data-i18n="hero_btn_docs"></span>
+      </a>
+    </div>
+  </section>
+
+  <section class="install-section" id="install">
+    <div class="section-header reveal">
+      <div class="section-label">
+        <span class="line"></span><span data-i18n="install_label"></span><span class="line"></span>
+      </div>
+      <h2 data-i18n="install_title"></h2>
+      <p data-i18n="install_desc"></p>
+    </div>
+
+    <div class="install-overview reveal">
+      <div class="install-side-card">
+        <h3 data-i18n="install_prereq_title"></h3>
+        <ul class="install-prereq-list">
+          <li data-i18n="install_req_1"></li>
+          <li data-i18n="install_req_2"></li>
+          <li data-i18n="install_req_3"></li>
+        </ul>
+      </div>
+      <div class="install-side-card">
+        <h3 data-i18n="install_quick_title"></h3>
+        <p data-i18n="install_quick_desc"></p>
+        <pre class="install-code"><code>cp drugclaw.config.example.yaml drugclaw.config.yaml
+drugclaw setup
+drugclaw doctor
+drugclaw start</code></pre>
+      </div>
+    </div>
+
+    <div class="install-grid reveal">
+      <div class="install-card">
+        <span class="install-method" data-i18n="install_card_1_method"></span>
+        <h3 data-i18n="install_card_1_title"></h3>
+        <p data-i18n="install_card_1_desc"></p>
+        <pre class="install-code"><code>curl -fsSL https://drugclaw.com/install.sh | bash</code></pre>
+      </div>
+
+      <div class="install-card">
+        <span class="install-method" data-i18n="install_card_2_method"></span>
+        <h3 data-i18n="install_card_2_title"></h3>
+        <p data-i18n="install_card_2_desc"></p>
+        <pre class="install-code"><code>iwr https://drugclaw.com/install.ps1 -UseBasicParsing | iex</code></pre>
+      </div>
+
+      <div class="install-card">
+        <span class="install-method" data-i18n="install_card_3_method"></span>
+        <h3 data-i18n="install_card_3_title"></h3>
+        <p data-i18n="install_card_3_desc"></p>
+        <pre class="install-code"><code>git clone https://github.com/DrugClaw/DrugClaw.git
+cd drugclaw
+cargo build
+npm --prefix web install
+npm --prefix web run build</code></pre>
+      </div>
+
+      <div class="install-card">
+        <span class="install-method" data-i18n="install_card_4_method"></span>
+        <h3 data-i18n="install_card_4_title"></h3>
+        <p data-i18n="install_card_4_desc"></p>
+        <pre class="install-code"><code>Web UI: http://127.0.0.1:10961
+
+Optional:
+docker build -f docker/drug-sandbox.Dockerfile -t drugclaw-drug-sandbox:latest .</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="features-strip" id="features">
+    <div class="feature-card">
+      <div class="feature-icon-wrap"><i class="fa-solid fa-comments"></i></div>
+      <h3 data-i18n="f1_title"></h3>
+      <p data-i18n="f1_desc"></p>
+      <span class="feature-tag" data-i18n="f1_tag"></span>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon-wrap"><i class="fa-solid fa-database"></i></div>
+      <h3 data-i18n="f2_title"></h3>
+      <p data-i18n="f2_desc"></p>
+      <span class="feature-tag" data-i18n="f2_tag"></span>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon-wrap"><i class="fa-solid fa-dna"></i></div>
+      <h3 data-i18n="f3_title"></h3>
+      <p data-i18n="f3_desc"></p>
+      <span class="feature-tag" data-i18n="f3_tag"></span>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon-wrap"><i class="fa-solid fa-display"></i></div>
+      <h3 data-i18n="f4_title"></h3>
+      <p data-i18n="f4_desc"></p>
+      <span class="feature-tag" data-i18n="f4_tag"></span>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon-wrap"><i class="fa-solid fa-shield-halved"></i></div>
+      <h3 data-i18n="f5_title"></h3>
+      <p data-i18n="f5_desc"></p>
+      <span class="feature-tag" data-i18n="f5_tag"></span>
+    </div>
+  </section>
+
+  <section class="capability-section" id="capability">
+    <div class="section-header reveal">
+      <div class="section-label">
+        <span class="line"></span><span data-i18n="capability_label"></span><span class="line"></span>
+      </div>
+      <h2 data-i18n="capability_title"></h2>
+      <p data-i18n="capability_desc"></p>
+    </div>
+
+    <div class="capability-grid">
+      <div class="capability-card reveal">
+        <span class="capability-chip capability-chip-good" data-i18n="capability_good_chip"></span>
+        <h3 data-i18n="capability_good_title"></h3>
+        <ul class="capability-list">
+          <li data-i18n="capability_good_1"></li>
+          <li data-i18n="capability_good_2"></li>
+          <li data-i18n="capability_good_3"></li>
+          <li data-i18n="capability_good_4"></li>
+          <li data-i18n="capability_good_5"></li>
+        </ul>
+      </div>
+
+      <div class="capability-card capability-card-warning reveal">
+        <span class="capability-chip capability-chip-warning" data-i18n="capability_not_chip"></span>
+        <h3 data-i18n="capability_not_title"></h3>
+        <ul class="capability-list">
+          <li data-i18n="capability_not_1"></li>
+          <li data-i18n="capability_not_2"></li>
+          <li data-i18n="capability_not_3"></li>
+          <li data-i18n="capability_not_4"></li>
+          <li data-i18n="capability_not_5"></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="capability-note reveal">
+      <i class="fa-solid fa-circle-info"></i>
+      <p data-i18n="capability_note"></p>
+    </div>
+  </section>
+
+  <section class="how-section" id="how">
+    <div class="section-header reveal">
+      <div class="section-label">
+        <span class="line"></span><span data-i18n="how_label"></span><span class="line"></span>
+      </div>
+      <h2 data-i18n="how_title"></h2>
+      <p data-i18n="how_desc"></p>
+    </div>
+
+    <div class="steps-row reveal">
+      <div class="step-item">
+        <div class="step-icon-wrap">
+          <div class="step-num">1</div>💬
+        </div>
+        <h3 data-i18n="step1_title"></h3>
+        <p data-i18n="step1_desc"></p>
+      </div>
+      <div class="step-connector">
+        <svg width="40" height="20" viewBox="0 0 40 20" fill="none">
+          <path d="M0 10h32m0 0l-6-6m6 6l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+      </div>
+      <div class="step-item">
+        <div class="step-icon-wrap">
+          <div class="step-num">2</div>🧪
+        </div>
+        <h3 data-i18n="step2_title"></h3>
+        <p data-i18n="step2_desc"></p>
+      </div>
+      <div class="step-connector">
+        <svg width="40" height="20" viewBox="0 0 40 20" fill="none">
+          <path d="M0 10h32m0 0l-6-6m6 6l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+      </div>
+      <div class="step-item">
+        <div class="step-icon-wrap">
+          <div class="step-num">3</div>📊
+        </div>
+        <h3 data-i18n="step3_title"></h3>
+        <p data-i18n="step3_desc"></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="demos" id="demos">
+    <div class="section-header reveal">
+      <div class="section-label">
+        <span class="line"></span><span data-i18n="demos_label"></span><span class="line"></span>
+      </div>
+      <h2 data-i18n="demos_title"></h2>
+      <p data-i18n="demos_desc"></p>
+    </div>
+
+    <div class="demos-grid">
+      <div class="demo-card reveal">
+        <div class="demo-card-image">
+          <img src="static/demos/example_1.png" alt="Protein structure rendering demo" class="demo-image-real" loading="lazy">
+        </div>
+        <div class="demo-card-content">
+          <span class="demo-tag" data-i18n="demo1_tag"></span>
+          <h3 data-i18n="demo1_title"></h3>
+          <p data-i18n="demo1_desc"></p>
+        </div>
+      </div>
+
+      <div class="demo-card reveal">
+        <div class="demo-card-image">
+          <img src="static/demos/example_2.png" alt="PubMed literature search demo" class="demo-image-real" loading="lazy">
+        </div>
+        <div class="demo-card-content">
+          <span class="demo-tag" data-i18n="demo2_tag"></span>
+          <h3 data-i18n="demo2_title"></h3>
+          <p data-i18n="demo2_desc"></p>
+        </div>
+      </div>
+
+      <div class="demo-card full-width reveal">
+        <div class="demo-card-image">
+          <div class="demo-image-grid">
+            <img src="static/demos/example_3.png" alt="Hydrogen bond analysis demo screenshot 1" class="demo-image-real" loading="lazy">
+            <img src="static/demos/example_3_1.png" alt="Hydrogen bond analysis demo screenshot 2" class="demo-image-real" loading="lazy">
+            <img src="static/demos/example_3_2.png" alt="Hydrogen bond analysis demo screenshot 3" class="demo-image-real" loading="lazy">
+          </div>
+        </div>
+        <div class="demo-card-content">
+          <span class="demo-tag" data-i18n="demo3_tag"></span>
+          <h3 data-i18n="demo3_title"></h3>
+          <p data-i18n="demo3_desc"></p>
+        </div>
+      </div>
+
+      <div class="demo-card reveal">
+        <div class="demo-card-image">
+          <img src="static/demos/example_4.png" alt="Target intelligence dossier demo" class="demo-image-real" loading="lazy">
+        </div>
+        <div class="demo-card-content">
+          <span class="demo-tag" data-i18n="demo4_tag"></span>
+          <h3 data-i18n="demo4_title"></h3>
+          <p data-i18n="demo4_desc"></p>
+        </div>
+      </div>
+
+      <div class="demo-card reveal">
+        <div class="demo-card-image">
+          <img src="static/demos/example_5.png" alt="Compound database triage demo" class="demo-image-real" loading="lazy">
+        </div>
+        <div class="demo-card-content">
+          <span class="demo-tag" data-i18n="demo5_tag"></span>
+          <h3 data-i18n="demo5_title"></h3>
+          <p data-i18n="demo5_desc"></p>
+        </div>
+      </div>
+
+      <div class="demo-card reveal">
+        <div class="demo-card-image">
+          <img src="static/demos/example_6.png" alt="Docking workflow summary demo" class="demo-image-real" loading="lazy">
+        </div>
+        <div class="demo-card-content">
+          <span class="demo-tag" data-i18n="demo6_tag"></span>
+          <h3 data-i18n="demo6_title"></h3>
+          <p data-i18n="demo6_desc"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="testimonials-section" id="testimonials">
+    <div class="section-header reveal">
+      <div class="section-label">
+        <span class="line"></span><span data-i18n="reviews_label"></span><span class="line"></span>
+      </div>
+      <h2 data-i18n="reviews_title"></h2>
+      <p data-i18n="reviews_desc"></p>
+    </div>
+
+    <div class="testimonials-track-wrap">
+      <div class="testimonials-track" id="testimonialsTrack">
+        <div class="testimonial-card">
+          <div class="testimonial-stars">★★★★★</div>
+          <p class="testimonial-text" data-i18n="r1_text"></p>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar">🧬</div>
+            <div>
+              <div class="testimonial-name" data-i18n="r1_name"></div>
+              <div class="testimonial-role" data-i18n="r1_role"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="testimonial-card">
+          <div class="testimonial-stars">★★★★★</div>
+          <p class="testimonial-text" data-i18n="r2_text"></p>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar">💊</div>
+            <div>
+              <div class="testimonial-name" data-i18n="r2_name"></div>
+              <div class="testimonial-role" data-i18n="r2_role"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="testimonial-card">
+          <div class="testimonial-stars">★★★★★</div>
+          <p class="testimonial-text" data-i18n="r3_text"></p>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar">🧪</div>
+            <div>
+              <div class="testimonial-name" data-i18n="r3_name"></div>
+              <div class="testimonial-role" data-i18n="r3_role"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="testimonial-card">
+          <div class="testimonial-stars">★★★★★</div>
+          <p class="testimonial-text" data-i18n="r4_text"></p>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar">📈</div>
+            <div>
+              <div class="testimonial-name" data-i18n="r4_name"></div>
+              <div class="testimonial-role" data-i18n="r4_role"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="testimonial-card">
+          <div class="testimonial-stars">★★★★★</div>
+          <p class="testimonial-text" data-i18n="r5_text"></p>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar">🧠</div>
+            <div>
+              <div class="testimonial-name" data-i18n="r5_name"></div>
+              <div class="testimonial-role" data-i18n="r5_role"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="testimonial-card">
+          <div class="testimonial-stars">★★★★★</div>
+          <p class="testimonial-text" data-i18n="r6_text"></p>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar">⚙️</div>
+            <div>
+              <div class="testimonial-name" data-i18n="r6_name"></div>
+              <div class="testimonial-role" data-i18n="r6_role"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="bottom-cta" id="cta">
+    <div class="cta-inner reveal">
+      <img src="static/logo.png" alt="DrugClaw" class="cta-logo">
+      <h2 data-i18n="cta_title"></h2>
+      <p data-i18n="cta_desc"></p>
+      <div class="cta-buttons">
+        <a href="#install" class="btn-download btn-mac">
+          <i class="fa-solid fa-download" style="font-size:18px;"></i>
+          <span data-i18n="cta_btn_site"></span>
+        </a>
+        <a href="https://github.com/DrugClaw/DrugClaw" class="btn-download btn-win" target="_blank" rel="noreferrer">
+          <i class="fa-brands fa-github" style="font-size:18px;"></i>
+          <span data-i18n="cta_btn_github"></span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <img src="static/logo.png" alt="DrugClaw">
+        <span class="footer-brand-name" data-i18n="footer_brand"></span>
+      </div>
+      <p class="footer-copyright" data-i18n="footer_copy"></p>
+      <div class="footer-links">
+        <a href="/privacy-policy.html" data-i18n="footer_privacy"></a>
+        <span>•</span>
+        <a href="/terms-of-service.html" data-i18n="footer_terms"></a>
+        <span>•</span>
+        <a href="/disclaimer.html" data-i18n="footer_disclaimer"></a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+
+  <script>
+    const translations = {
+      "zh-CN": {
+        page_title: "DrugClaw · AI Research Assistant for Accelerated Drug Discovery.",
+        meta_description: "DrugClaw 是面向加速药物发现的 Rust 多渠道智能体运行时，集成工具调用、记忆系统、本地 Web UI、hooks 和内置科学技能。",
+        og_description: "Rust 多渠道 agent runtime，覆盖工具调用、记忆、Web UI、hooks 与药物发现研究工作流。",
+        lang_label: "语言",
+        nav_features: "核心能力",
+        nav_how: "运行流程",
+        nav_install: "安装",
+        nav_demos: "演示示例",
+        nav_reviews: "用户评价",
+        nav_cta: "资源",
+        nav_drop_site: "查看安装方法",
+        nav_drop_github: "查看 GitHub",
+        hero_badge: "DrugClaw",
+        hero_wordmark: "DrugClaw",
+        hero_slogan: "AI Research Assistant for Accelerated Drug Discovery.",
+        hero_free: "多渠道运行时 · 内置科学技能 · 可复现研究输出",
+        hero_btn_site: "安装 DrugClaw",
+        hero_btn_github: "查看 GitHub",
+        hero_btn_docs: "查看能力说明",
+        hero_popup: "DrugClaw 把工具调用、记忆、Web UI、hooks 和领域技能放进同一套运行时，不拆成多个独立 bot。",
+        install_label: "INSTALL",
+        install_title: "安装 DrugClaw",
+        install_desc: "可以直接使用一键安装脚本，也可以从源码构建本地运行环境。",
+        install_prereq_title: "Prerequisites",
+        install_req_1: "macOS 或 Linux",
+        install_req_2: "Docker Desktop",
+        install_req_3: "Anthropic API key",
+        install_quick_title: "首次启动",
+        install_quick_desc: "创建配置文件后，先运行 setup 和 doctor，再启动运行时。默认本地 Web UI 地址是 http://127.0.0.1:10961。",
+        install_card_1_method: "macOS / Linux",
+        install_card_1_title: "一键安装",
+        install_card_1_desc: "安装最新 release 二进制。如果 Docker 可用，安装器还会尝试构建默认科学 sandbox 镜像。",
+        install_card_2_method: "Windows",
+        install_card_2_title: "PowerShell 安装",
+        install_card_2_desc: "通过 PowerShell 拉取并安装最新 release。",
+        install_card_3_method: "Source",
+        install_card_3_title: "从源码构建",
+        install_card_3_desc: "克隆仓库，构建 Rust 运行时，并编译本地 Web UI。",
+        install_card_4_method: "Runtime",
+        install_card_4_title: "默认运行入口",
+        install_card_4_desc: "运行时默认以 Web-first 方式启动；需要完整 science + docking 工具链时，可额外构建统一 sandbox 镜像。",
+        f1_title: "多渠道 Agent Loop",
+        f1_desc: "同一套 channel-agnostic agent loop 服务 Telegram、Discord、Web 和其他渠道适配器。",
+        f1_tag: "Multi-channel",
+        f2_title: "长期记忆与会话恢复",
+        f2_desc: "文件记忆与结构化 SQLite 记忆一起保留上下文，支持长任务续跑和后续追问。",
+        f2_tag: "Durable Context",
+        f3_title: "内置科学技能层",
+        f3_desc: "内置技能覆盖文献检索、公共数据库、化学、QSAR、ADMET 和 docking 工作流。",
+        f3_tag: "Science Ready",
+        f4_title: "本地 Web UI 与 Hooks",
+        f4_desc: "通过本地 Web UI 做会话管理和运行操作，也可以通过 HTTP hooks 接入自动化流程。",
+        f4_tag: "Operator Console",
+        f5_title: "可复现执行与产物落盘",
+        f5_desc: "SQLite 记录、结构化报告和保存下来的分析产物让复查、复现和汇报更直接。",
+        f5_tag: "Traceable",
+        capability_label: "CAPABILITY",
+        capability_title: "能力边界",
+        capability_desc: "DrugClaw 明确面向药物发现研究加速。它擅长检索、整理、分析和生成可复现产物，但不替代湿实验、临床或监管判断。",
+        capability_good_chip: "Strong at",
+        capability_good_title: "DrugClaw 擅长",
+        capability_good_1: "文献与公共数据库检索",
+        capability_good_2: "面向生物和化学产物的结构化整理",
+        capability_good_3: "生信与计算化学的可复现脚本流程",
+        capability_good_4: "通过 docking、ADMET、QSAR、结构型打分做启发式优先级排序",
+        capability_good_5: "把聊天里的研究意图转成可落盘的分析产物、报告与后续任务",
+        capability_not_chip: "Not for",
+        capability_not_title: "DrugClaw 不是",
+        capability_not_1: "湿实验自动化系统",
+        capability_not_2: "药化或结构生物学专家判断的替代品",
+        capability_not_3: "经过临床或监管验证的 ADMET / affinity 预测系统",
+        capability_not_4: "诊断、治疗或监管决策系统",
+        capability_not_5: "证明某个化合物在体外、体内或人体中有效的证据",
+        capability_note: "当 DrugClaw 给出 docking 分数、QSAR 预测、ADMET 启发式或亲和力估计时，应把它们视为优先级排序信号，而不是实验事实。",
+        how_label: "HOW IT WORKS",
+        how_title: "一套 Agent Loop，贯穿所有渠道",
+        how_desc: "DrugClaw 在 Telegram、Discord、Web 和自动化 hooks 中复用同一条核心处理链路。",
+        step1_title: "加载会话、记忆和技能",
+        step1_desc: "恢复聊天状态，读取文件记忆和结构化记忆，并组装 system prompt 与技能目录。",
+        step2_title: "调用模型并执行工具",
+        step2_desc: "模型可以请求内置工具和科学技能；需要时也可以放到 sandbox 里执行。",
+        step3_title: "保存产物并支持续跑",
+        step3_desc: "会话、报告、表格和分析文件会落盘保存，后续任务可以直接从已有上下文继续。",
+        demos_label: "DEMO EXAMPLES",
+        demos_title: "真实 Telegram 演示",
+        demos_desc: "下面这些示例都对应 README 中的 live demonstrations，展示 DrugClaw 如何处理真实研究任务。",
+        demo1_tag: "1. Telegram demo",
+        demo1_title: "Protein Structure Rendering",
+        demo1_desc: "Fetch a PDB structure, render it in rainbow coloring with PyMOL, and send the image.",
+        demo2_tag: "2. Telegram demo",
+        demo2_title: "PubMed Literature Search",
+        demo2_desc: "Search PubMed for recent high-impact papers and provide structured summaries.",
+        demo3_tag: "3. Telegram demo",
+        demo3_title: "Hydrogen Bond Analysis",
+        demo3_desc: "Visualize hydrogen bonds between a ligand and protein in PDB 3BIK.",
+        demo4_tag: "4. Telegram demo",
+        demo4_title: "Target Intelligence Dossier",
+        demo4_desc: "Build a concise target dossier by combining UniProt, OpenTargets, Reactome, STRING, ClinVar, and known-drug evidence into one brief.",
+        demo5_tag: "5. Telegram demo",
+        demo5_title: "Compound Database Triage",
+        demo5_desc: "Query PubChem, ChEMBL, and BindingDB for a compound or target, normalize the returned activity records, and send back a ranked summary table.",
+        demo6_tag: "6. Telegram demo",
+        demo6_title: "Docking Workflow Summary",
+        demo6_desc: "Generate the search box, run docking, and return the top poses with a compact report.",
+        reviews_label: "REVIEWS",
+        reviews_title: "团队反馈",
+        reviews_desc: "来自药物发现、计算生物和平台工程方向的使用感受。",
+        r1_text: "“它把数据库检索、结构处理和报告输出串成了一条很短的链路。”",
+        r1_name: "Lina",
+        r1_role: "Computational Biology",
+        r2_text: "“本地 Web UI 和持久记忆让长任务续跑比以前顺很多。”",
+        r2_name: "Ethan",
+        r2_role: "Drug Discovery Platform",
+        r3_text: "“把 PubChem、ChEMBL 和 BindingDB 的结果快速整理成摘要表，节省了很多人工时间。”",
+        r3_name: "Ming",
+        r3_role: "Project Scientist",
+        r4_text: "“docking 结果、图像和分析文件能一起保存下来，这点对复盘很关键。”",
+        r4_name: "Aria",
+        r4_role: "Translational Research",
+        r5_text: "“技能层覆盖文献、数据库和 chemistry workflow，减少了来回切工具的次数。”",
+        r5_name: "Kai",
+        r5_role: "Infrastructure",
+        r6_text: "“边做边保留结构化产物，这让后续汇报和交接更省力。”",
+        r6_name: "Nora",
+        r6_role: "Medicinal Chemistry",
+        cta_title: "安装 DrugClaw，启动本地研究工作流",
+        cta_desc: "从一键安装脚本开始，或者直接从源码构建，然后在本地 Web UI 或聊天渠道中运行研究任务。",
+        cta_btn_site: "查看安装方法",
+        cta_btn_github: "打开仓库",
+        footer_brand: "DrugClaw",
+        footer_copy: "DrugClaw © 2026 | AI Research Assistant for Accelerated Drug Discovery.",
+        footer_privacy: "Privacy Policy",
+        footer_terms: "Terms of Service",
+        footer_disclaimer: "Disclaimer"
+      },
+      "zh-TW": {
+        page_title: "DrugClaw · AI Research Assistant for Accelerated Drug Discovery.",
+        meta_description: "DrugClaw 是面向加速藥物發現的 Rust 多渠道智能體運行時，整合工具呼叫、記憶系統、本地 Web UI、hooks 與內建科學技能。",
+        og_description: "Rust 多渠道 agent runtime，覆蓋工具呼叫、記憶、Web UI、hooks 與藥物發現研究工作流。",
+        lang_label: "語言",
+        nav_features: "核心能力",
+        nav_how: "運行流程",
+        nav_install: "安裝",
+        nav_demos: "演示示例",
+        nav_reviews: "用戶評價",
+        nav_cta: "資源",
+        nav_drop_site: "查看安裝方法",
+        nav_drop_github: "查看 GitHub",
+        hero_badge: "DrugClaw",
+        hero_wordmark: "DrugClaw",
+        hero_slogan: "AI Research Assistant for Accelerated Drug Discovery.",
+        hero_free: "多渠道運行時 · 內建科學技能 · 可重現研究輸出",
+        hero_btn_site: "安裝 DrugClaw",
+        hero_btn_github: "查看 GitHub",
+        hero_btn_docs: "查看能力說明",
+        hero_popup: "DrugClaw 將工具呼叫、記憶、Web UI、hooks 與領域技能放進同一套運行時，而不是拆成多個彼此分離的 bot。",
+        install_label: "INSTALL",
+        install_title: "安裝 DrugClaw",
+        install_desc: "可以直接使用一鍵安裝腳本，也可以從原始碼建置本地運行環境。",
+        install_prereq_title: "Prerequisites",
+        install_req_1: "macOS 或 Linux",
+        install_req_2: "Docker Desktop",
+        install_req_3: "Anthropic API key",
+        install_quick_title: "首次啟動",
+        install_quick_desc: "建立設定檔後，先執行 setup 和 doctor，再啟動運行時。預設本地 Web UI 位址是 http://127.0.0.1:10961。",
+        install_card_1_method: "macOS / Linux",
+        install_card_1_title: "一鍵安裝",
+        install_card_1_desc: "安裝最新 release 二進位。如果 Docker 可用，安裝器也會嘗試建置預設科學 sandbox 映像。",
+        install_card_2_method: "Windows",
+        install_card_2_title: "PowerShell 安裝",
+        install_card_2_desc: "透過 PowerShell 下載並安裝最新 release。",
+        install_card_3_method: "Source",
+        install_card_3_title: "從原始碼建置",
+        install_card_3_desc: "複製倉庫、建置 Rust 運行時，並編譯本地 Web UI。",
+        install_card_4_method: "Runtime",
+        install_card_4_title: "預設運行入口",
+        install_card_4_desc: "運行時預設以 Web-first 方式啟動；需要完整 science + docking 工具鏈時，可額外建置統一 sandbox 映像。",
+        f1_title: "多渠道 Agent Loop",
+        f1_desc: "同一套 channel-agnostic agent loop 服務 Telegram、Discord、Web 與其他渠道適配器。",
+        f1_tag: "Multi-channel",
+        f2_title: "長期記憶與會話恢復",
+        f2_desc: "檔案記憶與結構化 SQLite 記憶一起保留上下文，支援長任務續跑與後續追問。",
+        f2_tag: "Durable Context",
+        f3_title: "內建科學技能層",
+        f3_desc: "內建技能覆蓋文獻檢索、公共資料庫、化學、QSAR、ADMET 與 docking 工作流。",
+        f3_tag: "Science Ready",
+        f4_title: "本地 Web UI 與 Hooks",
+        f4_desc: "透過本地 Web UI 進行會話管理和運行操作，也可用 HTTP hooks 接入自動化流程。",
+        f4_tag: "Operator Console",
+        f5_title: "可重現執行與產物落盤",
+        f5_desc: "SQLite 紀錄、結構化報告與保存下來的分析產物，讓覆查、重現與彙報更直接。",
+        f5_tag: "Traceable",
+        capability_label: "CAPABILITY",
+        capability_title: "能力邊界",
+        capability_desc: "DrugClaw 明確面向藥物發現研究加速。它擅長檢索、整理、分析和產出可重現結果，但不取代濕實驗、臨床或監管判斷。",
+        capability_good_chip: "Strong at",
+        capability_good_title: "DrugClaw 擅長",
+        capability_good_1: "文獻與公共資料庫檢索",
+        capability_good_2: "面向生物與化學產物的結構化整理",
+        capability_good_3: "生信與計算化學的可重現腳本流程",
+        capability_good_4: "透過 docking、ADMET、QSAR、結構型打分做啟發式優先級排序",
+        capability_good_5: "把聊天中的研究意圖轉成可落盤的分析產物、報告與後續任務",
+        capability_not_chip: "Not for",
+        capability_not_title: "DrugClaw 不是",
+        capability_not_1: "濕實驗自動化系統",
+        capability_not_2: "藥化或結構生物學專家判斷的替代品",
+        capability_not_3: "經過臨床或監管驗證的 ADMET / affinity 預測系統",
+        capability_not_4: "診斷、治療或監管決策系統",
+        capability_not_5: "證明某個化合物在體外、體內或人體中有效的證據",
+        capability_note: "當 DrugClaw 給出 docking 分數、QSAR 預測、ADMET 啟發式或親和力估計時，應把它們視為優先級排序信號，而不是實驗事實。",
+        how_label: "HOW IT WORKS",
+        how_title: "一套 Agent Loop，貫穿所有渠道",
+        how_desc: "DrugClaw 在 Telegram、Discord、Web 與自動化 hooks 中重用同一條核心處理鏈路。",
+        step1_title: "載入會話、記憶與技能",
+        step1_desc: "恢復聊天狀態，讀取檔案記憶與結構化記憶，並組裝 system prompt 與技能目錄。",
+        step2_title: "呼叫模型並執行工具",
+        step2_desc: "模型可以請求內建工具與科學技能；需要時也能放進 sandbox 中執行。",
+        step3_title: "保存產物並支援續跑",
+        step3_desc: "會話、報告、表格與分析檔案會落盤保存，後續任務可直接從既有上下文繼續。",
+        demos_label: "DEMO EXAMPLES",
+        demos_title: "真實 Telegram 演示",
+        demos_desc: "下面這些示例都對應 README 中的 live demonstrations，展示 DrugClaw 如何處理真實研究任務。",
+        demo1_tag: "1. Telegram demo",
+        demo1_title: "Protein Structure Rendering",
+        demo1_desc: "Fetch a PDB structure, render it in rainbow coloring with PyMOL, and send the image.",
+        demo2_tag: "2. Telegram demo",
+        demo2_title: "PubMed Literature Search",
+        demo2_desc: "Search PubMed for recent high-impact papers and provide structured summaries.",
+        demo3_tag: "3. Telegram demo",
+        demo3_title: "Hydrogen Bond Analysis",
+        demo3_desc: "Visualize hydrogen bonds between a ligand and protein in PDB 3BIK.",
+        demo4_tag: "4. Telegram demo",
+        demo4_title: "Target Intelligence Dossier",
+        demo4_desc: "Build a concise target dossier by combining UniProt, OpenTargets, Reactome, STRING, ClinVar, and known-drug evidence into one brief.",
+        demo5_tag: "5. Telegram demo",
+        demo5_title: "Compound Database Triage",
+        demo5_desc: "Query PubChem, ChEMBL, and BindingDB for a compound or target, normalize the returned activity records, and send back a ranked summary table.",
+        demo6_tag: "6. Telegram demo",
+        demo6_title: "Docking Workflow Summary",
+        demo6_desc: "Generate the search box, run docking, and return the top poses with a compact report.",
+        reviews_label: "REVIEWS",
+        reviews_title: "團隊回饋",
+        reviews_desc: "來自藥物發現、計算生物與平台工程方向的使用感受。",
+        r1_text: "“它把資料庫檢索、結構處理與報告輸出串成了一條很短的鏈路。”",
+        r1_name: "Lina",
+        r1_role: "Computational Biology",
+        r2_text: "“本地 Web UI 和持久記憶讓長任務續跑比以前順很多。”",
+        r2_name: "Ethan",
+        r2_role: "Drug Discovery Platform",
+        r3_text: "“把 PubChem、ChEMBL 和 BindingDB 的結果快速整理成摘要表，節省了很多人工時間。”",
+        r3_name: "Ming",
+        r3_role: "Project Scientist",
+        r4_text: "“docking 結果、圖像和分析檔案能一起保存下來，這點對覆盤很關鍵。”",
+        r4_name: "Aria",
+        r4_role: "Translational Research",
+        r5_text: "“技能層覆蓋文獻、資料庫和 chemistry workflow，減少了來回切工具的次數。”",
+        r5_name: "Kai",
+        r5_role: "Infrastructure",
+        r6_text: "“邊做邊保留結構化產物，這讓後續彙報和交接更省力。”",
+        r6_name: "Nora",
+        r6_role: "Medicinal Chemistry",
+        cta_title: "安裝 DrugClaw，啟動本地研究工作流",
+        cta_desc: "從一鍵安裝腳本開始，或直接從原始碼建置，然後在本地 Web UI 或聊天渠道中執行研究任務。",
+        cta_btn_site: "查看安裝方法",
+        cta_btn_github: "打開倉庫",
+        footer_brand: "DrugClaw",
+        footer_copy: "DrugClaw © 2026 | AI Research Assistant for Accelerated Drug Discovery.",
+        footer_privacy: "Privacy Policy",
+        footer_terms: "Terms of Service",
+        footer_disclaimer: "Disclaimer"
+      },
+      en: {
+        page_title: "DrugClaw · AI Research Assistant for Accelerated Drug Discovery.",
+        meta_description: "DrugClaw is a Rust multi-channel agent runtime for accelerated drug-discovery research, with tool use, memory, Web UI, hooks, and built-in science skills.",
+        og_description: "A Rust multi-channel agent runtime for accelerated drug-discovery research.",
+        lang_label: "Language",
+        nav_features: "Capabilities",
+        nav_how: "Workflow",
+        nav_install: "Install",
+        nav_demos: "Demo Examples",
+        nav_reviews: "Reviews",
+        nav_cta: "Resources",
+        nav_drop_site: "Install Guide",
+        nav_drop_github: "View GitHub",
+        hero_badge: "DrugClaw",
+        hero_wordmark: "DrugClaw",
+        hero_slogan: "AI Research Assistant for Accelerated Drug Discovery.",
+        hero_free: "Multi-channel runtime · built-in science skills · reproducible outputs",
+        hero_btn_site: "Install DrugClaw",
+        hero_btn_github: "View GitHub",
+        hero_btn_docs: "Capability Notes",
+        hero_popup: "DrugClaw combines tool use, memory, Web UI, hooks, and domain skills in one runtime instead of splitting work across separate bots.",
+        install_label: "INSTALL",
+        install_title: "Install DrugClaw",
+        install_desc: "Start with the one-line installer, or build from source if you want a local development setup.",
+        install_prereq_title: "Prerequisites",
+        install_req_1: "macOS or Linux",
+        install_req_2: "Docker Desktop",
+        install_req_3: "Anthropic API key",
+        install_quick_title: "First run",
+        install_quick_desc: "Create the config file, run setup and diagnostics, then start the runtime. The local Web UI listens on http://127.0.0.1:10961 by default.",
+        install_card_1_method: "macOS / Linux",
+        install_card_1_title: "One-line installer",
+        install_card_1_desc: "Installs the latest release binary. When Docker is available, the installer also tries to build the default science sandbox image.",
+        install_card_2_method: "Windows",
+        install_card_2_title: "PowerShell installer",
+        install_card_2_desc: "Fetch and install the latest release from PowerShell.",
+        install_card_3_method: "Source",
+        install_card_3_title: "Build from source",
+        install_card_3_desc: "Clone the repository, build the Rust runtime, and build the local Web UI.",
+        install_card_4_method: "Runtime",
+        install_card_4_title: "Default startup path",
+        install_card_4_desc: "The runtime is usually started Web-first; when you need the full science and docking stack, you can also build the unified sandbox image.",
+        f1_title: "Multi-channel Agent Loop",
+        f1_desc: "One channel-agnostic agent loop serves Telegram, Discord, Web, and other channel adapters.",
+        f1_tag: "Multi-channel",
+        f2_title: "Memory and Session Resume",
+        f2_desc: "File memory and structured SQLite memory keep durable context for long-running research work.",
+        f2_tag: "Durable Context",
+        f3_title: "Built-in Science Skills",
+        f3_desc: "Bundled skills cover literature review, public databases, chemistry, QSAR, ADMET, and docking workflows.",
+        f3_tag: "Science Ready",
+        f4_title: "Local Web UI and Hooks",
+        f4_desc: "Operate the runtime from a local Web UI and HTTP hook endpoints for automation ingress.",
+        f4_tag: "Operator Console",
+        f5_title: "Reproducible Execution",
+        f5_desc: "SQLite traces, saved artifacts, and structured reports make review and reproducibility straightforward.",
+        f5_tag: "Traceable",
+        capability_label: "CAPABILITY",
+        capability_title: "Capability Boundary",
+        capability_desc: "DrugClaw is explicitly aimed at accelerating drug-discovery research. It is strong at retrieval, organization, analysis, and reproducible artifact generation, but it does not replace wet-lab, clinical, or regulatory judgment.",
+        capability_good_chip: "Strong at",
+        capability_good_title: "DrugClaw is strong at",
+        capability_good_1: "literature and public-database lookup",
+        capability_good_2: "structured note-taking over biological and chemical artifacts",
+        capability_good_3: "reproducible scripting for bioinformatics and computational chemistry",
+        capability_good_4: "heuristic prioritization through docking, ADMET triage, QSAR, and structure-aware scoring",
+        capability_good_5: "moving from chat intent to saved artifacts, reports, and follow-up analyses",
+        capability_not_chip: "Not for",
+        capability_not_title: "DrugClaw is not",
+        capability_not_1: "a wet-lab automation system",
+        capability_not_2: "a substitute for medicinal chemistry or structural biology judgment",
+        capability_not_3: "a clinically validated ADMET or affinity oracle",
+        capability_not_4: "a regulatory, diagnostic, or treatment decision system",
+        capability_not_5: "proof that a compound works in vitro, in vivo, or in humans",
+        capability_note: "When DrugClaw reports docking scores, QSAR predictions, ADMET heuristics, or affinity estimates, those outputs should be treated as prioritization signals only.",
+        how_label: "HOW IT WORKS",
+        how_title: "One Agent Loop Across Channels",
+        how_desc: "DrugClaw reuses the same core processing flow across Telegram, Discord, Web, and hook-driven automation.",
+        step1_title: "Load session, memory, and skills",
+        step1_desc: "Recover chat state, pull file memory and structured memory, and assemble the system prompt plus skills catalog.",
+        step2_title: "Call the model and run tools",
+        step2_desc: "The model can invoke built-in tools and science skills, with sandboxing when needed.",
+        step3_title: "Persist artifacts and resume later",
+        step3_desc: "Sessions, reports, tables, and analysis files are saved so follow-up work starts from durable context.",
+        demos_label: "DEMO EXAMPLES",
+        demos_title: "Live Telegram demonstrations",
+        demos_desc: "These examples mirror the current README demos and show DrugClaw handling real research tasks through Telegram.",
+        demo1_tag: "1. Telegram demo",
+        demo1_title: "Protein Structure Rendering",
+        demo1_desc: "Fetch a PDB structure, render it in rainbow coloring with PyMOL, and send the image.",
+        demo2_tag: "2. Telegram demo",
+        demo2_title: "PubMed Literature Search",
+        demo2_desc: "Search PubMed for recent high-impact papers and provide structured summaries.",
+        demo3_tag: "3. Telegram demo",
+        demo3_title: "Hydrogen Bond Analysis",
+        demo3_desc: "Visualize hydrogen bonds between a ligand and protein in PDB 3BIK.",
+        demo4_tag: "4. Telegram demo",
+        demo4_title: "Target Intelligence Dossier",
+        demo4_desc: "Build a concise target dossier by combining UniProt, OpenTargets, Reactome, STRING, ClinVar, and known-drug evidence into one brief.",
+        demo5_tag: "5. Telegram demo",
+        demo5_title: "Compound Database Triage",
+        demo5_desc: "Query PubChem, ChEMBL, and BindingDB for a compound or target, normalize the returned activity records, and send back a ranked summary table.",
+        demo6_tag: "6. Telegram demo",
+        demo6_title: "Docking Workflow Summary",
+        demo6_desc: "Generate the search box, run docking, and return the top poses with a compact report.",
+        reviews_label: "REVIEWS",
+        reviews_title: "Team Feedback",
+        reviews_desc: "What drug-discovery, computational biology, and platform teams find useful in practice.",
+        r1_text: "“It shortens the path from public-database lookup to structure-aware output and reporting.”",
+        r1_name: "Lina",
+        r1_role: "Computational Biology",
+        r2_text: "“The local Web UI and persistent memory make long-running work much easier to resume.”",
+        r2_name: "Ethan",
+        r2_role: "Drug Discovery Platform",
+        r3_text: "“Normalizing PubChem, ChEMBL, and BindingDB results into one summary table saves a lot of manual effort.”",
+        r3_name: "Ming",
+        r3_role: "Project Scientist",
+        r4_text: "“Keeping docking results, images, and analysis files together matters a lot for review.”",
+        r4_name: "Aria",
+        r4_role: "Translational Research",
+        r5_text: "“The bundled skill layer covers literature, public databases, and chemistry workflows without tool-hopping.”",
+        r5_name: "Kai",
+        r5_role: "Infrastructure",
+        r6_text: "“Structured artifacts make handoff and follow-up reporting much easier.”",
+        r6_name: "Nora",
+        r6_role: "Medicinal Chemistry",
+        cta_title: "Install DrugClaw and start local research workflows",
+        cta_desc: "Use the one-line installer or build from source, then run research tasks from the local Web UI or your chat channels.",
+        cta_btn_site: "See Install",
+        cta_btn_github: "Open Repository",
+        footer_brand: "DrugClaw",
+        footer_copy: "DrugClaw © 2026 | AI Research Assistant for Accelerated Drug Discovery.",
+        footer_privacy: "Privacy Policy",
+        footer_terms: "Terms of Service",
+        footer_disclaimer: "Disclaimer"
+      }
+    };
+
+    const i18nNodes = Array.from(document.querySelectorAll('[data-i18n]'));
+    const langSelect = document.getElementById('langSelect');
+
+    const metaDescription = document.getElementById('meta-description');
+    const ogDescription = document.getElementById('og-description');
+    const ogTitle = document.getElementById('og-title');
+    const twitterDescription = document.getElementById('twitter-description');
+    const twitterTitle = document.getElementById('twitter-title');
+
+    function setLanguage(lang) {
+      const dict = translations[lang] || translations.en;
+
+      i18nNodes.forEach((node) => {
+        const key = node.getAttribute('data-i18n');
+        if (dict[key]) {
+          node.textContent = dict[key];
+        }
+      });
+
+      document.title = dict.page_title;
+      if (metaDescription) metaDescription.content = dict.meta_description;
+      if (ogDescription) ogDescription.content = dict.og_description;
+      if (twitterDescription) twitterDescription.content = dict.og_description;
+      if (ogTitle) ogTitle.content = dict.page_title;
+      if (twitterTitle) twitterTitle.content = dict.page_title;
+
+      document.documentElement.lang = lang;
+      langSelect.value = lang;
+      localStorage.setItem('drugclaw_lang', lang);
+    }
+
+    langSelect.addEventListener('change', (event) => {
+      setLanguage(event.target.value);
+    });
+
+    const storedLang = localStorage.getItem('drugclaw_lang');
+    const browserLang = (navigator.language || '').toLowerCase();
+    const initialLang =
+      storedLang ||
+      (browserLang.includes('zh-tw') || browserLang.includes('zh-hk') || browserLang.includes('hant')
+        ? 'zh-TW'
+        : browserLang.includes('zh')
+          ? 'zh-CN'
+          : 'en');
+
+    setLanguage(initialLang);
+  </script>
+</body>
+</html>

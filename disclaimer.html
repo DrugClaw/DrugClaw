@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DrugClaw Disclaimer</title>
+    <meta
+      id="meta-description"
+      name="description"
+      content="DrugClaw Disclaimer - limitations of content and service usage."
+    />
+    <link rel="canonical" href="https://drugclaw.com/disclaimer" />
+    <link rel="icon" type="image/png" href="static/logo.png" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&amp;family=Noto+Sans+SC:wght@300;400;500;700;900&amp;family=Noto+Sans+TC:wght@300;400;500;700;900&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="css/legal.css" />
+  </head>
+  <body>
+    <div class="grid-bg"></div>
+    <div class="float-orb orb-1"></div>
+    <div class="float-orb orb-2"></div>
+    <div class="float-orb orb-3"></div>
+    <canvas id="particles-canvas"></canvas>
+    <header class="header" id="navbar">
+      <div class="container header-inner">
+        <a class="brand" href="index.html">
+          <img src="static/logo.png" alt="DrugClaw logo" />
+          <span>DrugClaw</span>
+        </a>
+
+        <nav class="nav" aria-label="Legal pages">
+          <a href="index.html" data-i18n="nav_home"></a>
+          <a href="privacy-policy.html" data-i18n="nav_privacy"></a>
+          <a href="terms-of-service.html" data-i18n="nav_terms"></a>
+          <a href="disclaimer.html" class="active" data-i18n="nav_disclaimer"></a>
+        </nav>
+
+        <div class="lang">
+          <label for="langSelect" data-i18n="lang_label"></label>
+          <select id="langSelect">
+            <option value="zh-CN">简体中文</option>
+            <option value="zh-TW">繁體中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="hero">
+        <span class="eyebrow" data-i18n="hero_tag"></span>
+        <h1 data-i18n="hero_title"></h1>
+        <p class="subtitle" data-i18n="hero_subtitle"></p>
+        <p class="updated" data-i18n="hero_updated"></p>
+      </section>
+
+      <section class="content">
+        <article class="card">
+          <h2 data-i18n="s1_title"></h2>
+          <p data-i18n="s1_body"></p>
+        </article>
+
+        <article class="card">
+          <h2 data-i18n="s2_title"></h2>
+          <p data-i18n="s2_body"></p>
+        </article>
+
+        <article class="card">
+          <h2 data-i18n="s3_title"></h2>
+          <ul>
+            <li data-i18n="s3_li1"></li>
+            <li data-i18n="s3_li2"></li>
+            <li data-i18n="s3_li3"></li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2 data-i18n="s4_title"></h2>
+          <p data-i18n="s4_body"></p>
+        </article>
+
+        <article class="card">
+          <h2 data-i18n="s5_title"></h2>
+          <p data-i18n="s5_body"></p>
+        </article>
+
+        <article class="card">
+          <h2 data-i18n="s6_title"></h2>
+          <p data-i18n="s6_body"></p>
+        </article>
+
+        <article class="card">
+          <h2 data-i18n="s7_title"></h2>
+          <p data-i18n="s7_body"></p>
+        </article>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container footer-inner">
+        <div class="footer-brand">
+          <img src="static/logo.png" alt="DrugClaw" />
+          <span class="footer-brand-name">DrugClaw</span>
+        </div>
+        <p class="footer-copyright" data-i18n="footer_copy"></p>
+        <div class="footer-links">
+          <a href="privacy-policy.html" data-i18n="nav_privacy"></a>
+          <span>·</span>
+          <a href="terms-of-service.html" data-i18n="nav_terms"></a>
+          <span>·</span>
+          <a href="disclaimer.html" data-i18n="nav_disclaimer"></a>
+        </div>
+      </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+
+    <script>
+      const translations = {
+        "zh-CN": {
+          page_title: "DrugClaw 免责声明",
+          meta_description: "DrugClaw 免责声明：说明网站内容与服务使用的限制。",
+          nav_home: "首页",
+          nav_privacy: "Privacy Policy",
+          nav_terms: "Terms of Service",
+          nav_disclaimer: "Disclaimer",
+          lang_label: "语言",
+          hero_tag: "Legal",
+          hero_title: "Disclaimer",
+          hero_subtitle: "请在使用 DrugClaw 网站与服务前阅读本免责声明。",
+          hero_updated: "Last Updated: March 10, 2026",
+          s1_title: "1. 非医疗建议",
+          s1_body:
+            "DrugClaw 提供的内容、模型输出、示例流程与图表仅供研究和信息参考，不构成医疗建议、临床诊断、治疗方案或监管建议。",
+          s2_title: "2. 结果准确性与完整性",
+          s2_body:
+            "我们尽力提升服务质量，但不保证任何输出在特定场景中的准确性、完整性、时效性或适用性。你应对关键结论进行独立验证。",
+          s3_title: "3. 用户责任",
+          s3_li1: "你应确保使用行为符合所在地区法律法规及机构规范。",
+          s3_li2: "你应自行评估实验设计、参数设置与结果解释的科学合理性。",
+          s3_li3: "涉及安全、伦理或临床风险的决策必须由合格专业人员把关。",
+          s4_title: "4. 第三方平台与数据",
+          s4_body:
+            "DrugClaw 可能依赖第三方平台、工具或公开数据源。对于第三方内容的可用性、准确性或持续性，我们不作保证。",
+          s5_title: "5. 责任限制",
+          s5_body:
+            "在法律允许的最大范围内，DrugClaw 对因使用或无法使用服务而产生的间接损失、利润损失、数据损失或业务中断不承担责任。",
+          s6_title: "6. 前瞻性与研发信息",
+          s6_body:
+            "网站中关于功能规划、研发方向或性能目标的描述仅作信息说明，不构成任何承诺或保证。",
+          s7_title: "7. 更新与联系",
+          s7_body:
+            "我们可能按产品和法律要求更新本免责声明。更新版本将发布于本页并标注日期。联系方式：legal@drugclaw.com。",
+          footer_copy: " DrugClaw © 2026 | AI Research Assistant for Accelerated Drug Discovery. "
+        },
+        "zh-TW": {
+          page_title: "DrugClaw 免責聲明",
+          meta_description: "DrugClaw 免責聲明：說明網站內容與服務使用限制。",
+          nav_home: "首頁",
+          nav_privacy: "Privacy Policy",
+          nav_terms: "Terms of Service",
+          nav_disclaimer: "Disclaimer",
+          lang_label: "語言",
+          hero_tag: "Legal",
+          hero_title: "Disclaimer",
+          hero_subtitle: "請在使用 DrugClaw 網站與服務前閱讀本免責聲明。",
+          hero_updated: "Last Updated: March 10, 2026",
+          s1_title: "1. 非醫療建議",
+          s1_body:
+            "DrugClaw 提供的內容、模型輸出、範例流程與圖表僅供研究與資訊參考，不構成醫療建議、臨床診斷、治療方案或監管建議。",
+          s2_title: "2. 結果準確性與完整性",
+          s2_body:
+            "我們致力提升服務品質，但不保證任何輸出在特定情境下的準確性、完整性、即時性或適用性。你應對關鍵結論進行獨立驗證。",
+          s3_title: "3. 使用者責任",
+          s3_li1: "你應確保使用行為符合所在地區法律法規及機構規範。",
+          s3_li2: "你應自行評估實驗設計、參數設定與結果解讀的科學合理性。",
+          s3_li3: "涉及安全、倫理或臨床風險的決策，必須由合格專業人員把關。",
+          s4_title: "4. 第三方平台與資料",
+          s4_body:
+            "DrugClaw 可能依賴第三方平台、工具或公開資料來源。對於第三方內容的可用性、準確性或持續性，我們不作保證。",
+          s5_title: "5. 責任限制",
+          s5_body:
+            "在法律允許的最大範圍內，DrugClaw 對因使用或無法使用服務而造成的間接損失、利潤損失、資料遺失或業務中斷不承擔責任。",
+          s6_title: "6. 前瞻性與研發資訊",
+          s6_body:
+            "網站中關於功能規劃、研發方向或效能目標的描述僅供資訊參考，不構成任何承諾或保證。",
+          s7_title: "7. 更新與聯絡",
+          s7_body:
+            "我們可能依產品與法律要求更新本免責聲明。更新版本會發布於本頁並標註日期。聯絡方式：legal@drugclaw.com。",
+          footer_copy: " DrugClaw © 2026 | AI Research Assistant for Accelerated Drug Discovery. "
+        },
+        en: {
+          page_title: "DrugClaw Disclaimer",
+          meta_description: "DrugClaw Disclaimer - limits and conditions for use of content and services.",
+          nav_home: "Home",
+          nav_privacy: "Privacy Policy",
+          nav_terms: "Terms of Service",
+          nav_disclaimer: "Disclaimer",
+          lang_label: "Language",
+          hero_tag: "Legal",
+          hero_title: "Disclaimer",
+          hero_subtitle: "Please read this disclaimer before using DrugClaw website and services.",
+          hero_updated: "Last Updated: March 10, 2026",
+          s1_title: "1. Not Medical Advice",
+          s1_body:
+            "Content, model outputs, examples, and visualizations provided by DrugClaw are for research and informational use only and are not medical advice, diagnosis, treatment, or regulatory guidance.",
+          s2_title: "2. Accuracy and Completeness",
+          s2_body:
+            "We strive to improve quality but do not guarantee that any output is accurate, complete, current, or suitable for a specific purpose. You must independently validate critical conclusions.",
+          s3_title: "3. User Responsibility",
+          s3_li1: "You are responsible for compliance with applicable laws and institutional requirements.",
+          s3_li2: "You are responsible for evaluating experiment design, parameters, and interpretation.",
+          s3_li3: "Safety-, ethics-, or clinically sensitive decisions require qualified professional review.",
+          s4_title: "4. Third-Party Platforms and Data",
+          s4_body:
+            "DrugClaw may depend on third-party platforms, tools, or public data sources. We do not guarantee availability, accuracy, or continuity of third-party content.",
+          s5_title: "5. Limitation of Liability",
+          s5_body:
+            "To the maximum extent permitted by law, DrugClaw is not liable for indirect damages, lost profits, data loss, or business interruption arising from use or inability to use the service.",
+          s6_title: "6. Forward-Looking Statements",
+          s6_body:
+            "Any references to product roadmap, research direction, or performance targets are informational and do not constitute commitments or guarantees.",
+          s7_title: "7. Updates and Contact",
+          s7_body:
+            "We may revise this disclaimer due to product or legal changes. Updates will be posted on this page with a revised date. Contact: legal@drugclaw.com.",
+          footer_copy: " DrugClaw © 2026 | AI Research Assistant for Accelerated Drug Discovery. "
+        }
+      };
+
+      const i18nNodes = Array.from(document.querySelectorAll("[data-i18n]"));
+      const langSelect = document.getElementById("langSelect");
+      const metaDescription = document.getElementById("meta-description");
+
+      function setLanguage(lang) {
+        const dict = translations[lang] || translations.en;
+
+        i18nNodes.forEach((node) => {
+          const key = node.getAttribute("data-i18n");
+          if (dict[key]) node.textContent = dict[key];
+        });
+
+        document.title = dict.page_title;
+        if (metaDescription) metaDescription.content = dict.meta_description;
+        document.documentElement.lang = lang;
+        langSelect.value = lang;
+        localStorage.setItem("drugclaw_lang", lang);
+      }
+
+      langSelect.addEventListener("change", (event) => {
+        setLanguage(event.target.value);
+      });
+
+      const stored = localStorage.getItem("drugclaw_lang");
+      const navLang = (navigator.language || "").toLowerCase();
+      const initial =
+        stored ||
+        (navLang.includes("zh-tw") || navLang.includes("zh-hk") || navLang.includes("hant")
+          ? "zh-TW"
+          : navLang.includes("zh")
+            ? "zh-CN"
+            : "en");
+      setLanguage(initial);
+    </script>
+  </body>
+</html>
