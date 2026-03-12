@@ -24,8 +24,6 @@ Thumbs.db
 /web/node_modules/
 /website/node_modules/
 /gui/node_modules/
-/web/dist/
-/gui/dist/
 coverage/
 .nyc_output/
 *.tsbuildinfo
