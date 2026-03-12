@@ -12,6 +12,10 @@
 
 DrugClaw 是一个面向加速药物发现的 AI Research Assistant，以 Rust 多渠道智能体运行时的形式实现。它把聊天渠道、本地 Web UI、HTTP hooks、定时任务和领域技能放进同一套 agent core，而不是拆成多个彼此割裂的 bot。
 
+## Built with Rust. 🦀
+
+本项目在 [microclaw](https://github.com/microclaw/microclaw) 的基础上构建。
+
 ## DrugClaw 是什么
 
 DrugClaw 把药物发现研究工作流和通用 agent runtime 组合在一起：

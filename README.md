@@ -12,6 +12,10 @@
 
 DrugClaw is an AI Research Assistant for Accelerated Drug Discovery, implemented as a Rust multi-channel agent runtime. One agent core serves chat channels, the local Web UI, hooks, scheduled tasks, and domain skills without splitting the product into separate bots.
 
+## Built with Rust. 🦀
+
+This project is built on top of [microclaw](https://github.com/microclaw/microclaw).
+
 ## What DrugClaw Is
 
 DrugClaw combines drug-discovery research workflows with a general-purpose agent runtime:
