@@ -12,6 +12,33 @@
 
 DrugClaw 是一个面向加速药物发现的 AI Research Assistant，以 Rust 多渠道智能体运行时的形式实现。它把聊天渠道、本地 Web UI、HTTP hooks、定时任务和领域技能放进同一套 agent core，而不是拆成多个彼此割裂的 bot。
 
+## TL;DR
+
+- DrugClaw 是一个聚焦药物发现研究场景的多渠道 AI 运行时。
+- 它把工具调用、长期记忆、技能系统、定时任务、hooks 和 Web UI 集成到同一个 agent core。
+- 本地启动最短路径是：`drugclaw setup`、`drugclaw doctor`、`drugclaw start`。
+- docking / QSAR / ADMET 的输出应视为优先级信号，而非实验结论。
+
+## 目录
+
+- [DrugClaw 是什么](#drugclaw-是什么)
+- [当前范围](#当前范围)
+- [能力边界](#能力边界)
+- [Prerequisites](#prerequisites)
+- [Demo Examples](#demo-examples)
+- [安装](#安装)
+- [快速开始](#快速开始)
+- [最小配置示例](#最小配置示例)
+- [核心概念](#核心概念)
+- [Web UI 与 Hooks](#web-ui-与-hooks)
+- [科学技能能力层](#科学技能能力层)
+- [配置模型](#配置模型)
+- [CLI](#cli)
+- [Shell 脚本](#shell-脚本)
+- [开发](#开发)
+- [架构入口](#架构入口)
+- [文档索引](#文档索引)
+
 ## Built with Rust. 🦀
 
 本项目在 [microclaw](https://github.com/microclaw/microclaw) 的基础上构建。
@@ -87,6 +114,9 @@ DrugClaw 不是：
 
 下面是 DrugClaw 通过 Telegram 处理真实任务的演示示例。
 
+<details>
+<summary>展开 Demo Examples</summary>
+
 1. Protein Structure Rendering
 
 > 获取一个 PDB 结构，用 PyMOL 按 rainbow coloring 渲染，并把图片发送回来。
@@ -136,6 +166,8 @@ DrugClaw 不是：
 <p align="center">
   <img src="screenshots/example_6.png" alt="docking 工作流演示" width="92%" />
 </p>
+
+</details>
 
 ## 安装
 
@@ -253,6 +285,9 @@ DrugClaw 有两层记忆：
 
 ### 技能系统
 
+<details>
+<summary>展开技能系统介绍</summary>
+
 当前随包技能包括：
 
 - `bio-tools`
@@ -294,6 +329,8 @@ DrugClaw 有两层记忆：
 - AutoDock Vina 对接与后续化学重排序
 
 运行要求见 [docs/operations/science-runtime.md](docs/operations/science-runtime.md)。
+
+</details>
 
 ### Hooks
 
@@ -349,6 +386,9 @@ drugclaw skill list
 ## 科学技能能力层
 
 DrugClaw 现在已经自带一层较完整的科学工作流能力。
+
+<details>
+<summary>展开科学技能能力层详情</summary>
 
 ### `bio-tools`
 
@@ -613,6 +653,8 @@ docker build -f docker/drug-sandbox.Dockerfile -t drugclaw-drug-sandbox:latest .
 - 当前不额外提供 `med-sandbox` 或 `chem-sandbox`，因为依赖重叠太高，拆分只会增加运维复杂度
 
 参考：[docs/operations/science-runtime.md](docs/operations/science-runtime.md)
+
+</details>
 
 ## 配置模型
 

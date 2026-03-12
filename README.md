@@ -12,6 +12,33 @@
 
 DrugClaw is an AI Research Assistant for Accelerated Drug Discovery, implemented as a Rust multi-channel agent runtime. One agent core serves chat channels, the local Web UI, hooks, scheduled tasks, and domain skills without splitting the product into separate bots.
 
+## TL;DR
+
+- DrugClaw is a multi-channel AI runtime focused on drug-discovery research workflows.
+- It combines tool use, memory, skills, scheduler, hooks, and Web UI in one agent core.
+- You can run it locally with `drugclaw setup`, `drugclaw doctor`, and `drugclaw start`.
+- Treat docking/QSAR/ADMET outputs as prioritization signals, not experimental proof.
+
+## Table of Contents
+
+- [What DrugClaw Is](#what-drugclaw-is)
+- [Current Scope](#current-scope)
+- [Capability Boundary](#capability-boundary)
+- [Prerequisites](#prerequisites)
+- [Demo Examples](#demo-examples)
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [Minimal Config](#minimal-config)
+- [Core Concepts](#core-concepts)
+- [Web UI And Hooks](#web-ui-and-hooks)
+- [Science Skills](#science-skills)
+- [Configuration Model](#configuration-model)
+- [CLI](#cli)
+- [Shell Scripts](#shell-scripts)
+- [Development](#development)
+- [Architecture](#architecture)
+- [Documentation Map](#documentation-map)
+
 ## Built with Rust. 🦀
 
 This project is built on top of [microclaw](https://github.com/microclaw/microclaw).
@@ -87,6 +114,9 @@ When DrugClaw reports docking scores, QSAR predictions, ADMET heuristics, or aff
 
 Below are live demonstrations of DrugClaw handling real tasks via Telegram.
 
+<details>
+<summary>Show Demo Examples</summary>
+
 1. Protein Structure Rendering
 
 > Fetch a PDB structure, render it in rainbow coloring with PyMOL, and send the image.
@@ -136,6 +166,8 @@ Below are live demonstrations of DrugClaw handling real tasks via Telegram.
 <p align="center">
   <img src="screenshots/example_6.png" alt="Docking workflow summary demo" width="92%" />
 </p>
+
+</details>
 
 ## Install
 
@@ -253,6 +285,9 @@ This lets the runtime keep durable context without forcing every instruction int
 
 ### Skills
 
+<details>
+<summary>Show Skills Overview</summary>
+
 Bundled skills currently include:
 
 - `bio-tools`
@@ -294,6 +329,8 @@ Bundled domain skills now cover:
 - Vina-based docking plus downstream chemistry post-processing
 
 See [docs/operations/science-runtime.md](docs/operations/science-runtime.md) for runtime requirements.
+
+</details>
 
 ### Hooks
 
@@ -349,6 +386,9 @@ Reference: [docs/operations/http-hook-trigger.md](docs/operations/http-hook-trig
 ## Science Skills
 
 DrugClaw now ships a non-trivial scientific workflow layer.
+
+<details>
+<summary>Show Science Skills Details</summary>
 
 ### `bio-tools`
 
@@ -613,6 +653,8 @@ Design choice:
 - dedicated `med-sandbox` or `chem-sandbox` images are not provided because the current dependency overlap is high and the operator complexity is not worth it
 
 Reference: [docs/operations/science-runtime.md](docs/operations/science-runtime.md)
+
+</details>
 
 ## Configuration Model
 
