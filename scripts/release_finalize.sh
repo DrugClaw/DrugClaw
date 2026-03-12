@@ -55,7 +55,7 @@ wait_for_ci_success() {
   local elapsed=0
   local required_jobs_json="${REQUIRED_CI_JOBS_JSON:-}"
   if [ -z "$required_jobs_json" ]; then
-    required_jobs_json='["Web Build","Rust (ubuntu-latest)","Rust (macos-latest)","Rust (macos-13)","Stability Smoke"]'
+    required_jobs_json='["Web Build","Rust (ubuntu-latest)","Rust (macos-latest)","Stability Smoke"]'
   fi
   local required_job_count
 

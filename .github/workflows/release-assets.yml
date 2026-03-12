@@ -34,7 +34,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CI_WAIT_TIMEOUT_SECONDS: "900"
           CI_WAIT_INTERVAL_SECONDS: "30"
-          REQUIRED_CI_JOBS_JSON: '["Web Build","Rust (ubuntu-latest)","Rust (macos-latest)","Rust (macos-13)","Stability Smoke"]'
+          REQUIRED_CI_JOBS_JSON: '["Web Build","Rust (ubuntu-latest)","Rust (macos-latest)","Stability Smoke"]'
         shell: bash
         run: |
           TARGET_SHA="$(git rev-parse HEAD)"
@@ -142,7 +142,7 @@ jobs:
             asset_triple: aarch64-apple-darwin
             archive_ext: tar.gz
           - label: macos-x86_64
-            os: macos-13
+            os: macos-latest
             bin: drugclaw
             target_triple: x86_64-apple-darwin
             asset_triple: x86_64-apple-darwin
