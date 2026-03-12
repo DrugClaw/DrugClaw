@@ -249,14 +249,15 @@ impl Tool for BashTool {
             ));
         }
 
-        let (command, normalized_paths) = normalize_bash_command(command);
-        if contains_explicit_tmp_absolute_path(&command) {
+        if contains_explicit_tmp_absolute_path(command) {
             return ToolResult::error(format!(
                 "Command contains absolute /tmp path, which is disallowed. Bash already starts in the current chat working directory: {}. Use relative paths like `./file` or `$DRUGCLAW_TMP_DIR/file`.",
                 working_dir.display()
             ))
             .with_error_type("path_policy_blocked");
         }
+
+        let (command, normalized_paths) = normalize_bash_command(command);
 
         let env_files = extract_env_files(&input);
         if !env_files.is_empty() && command_accesses_dotenv(&command) {
@@ -437,7 +438,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_bash_rewrites_tmp_absolute_path_into_workspace() {
+    async fn test_bash_blocks_tmp_absolute_path_in_execute() {
         let root = std::env::temp_dir().join(format!("drugclaw_bash_{}", uuid::Uuid::new_v4()));
         let work = root.join("workspace");
         std::fs::create_dir_all(&work).unwrap();
@@ -446,12 +447,10 @@ mod tests {
         let result = tool
             .execute(json!({"command": "touch /tmp/from_tmp_alias.txt"}))
             .await;
-        assert!(
-            !result.is_error,
-            "expected success, got: {}",
-            result.content
-        );
-        assert!(work.join("shared/tmp/from_tmp_alias.txt").exists());
+        assert!(result.is_error, "expected error, got: {}", result.content);
+        assert_eq!(result.error_type.as_deref(), Some("path_policy_blocked"));
+        assert!(result.content.contains("Command contains absolute /tmp path"));
+        assert!(!work.join("shared/tmp/from_tmp_alias.txt").exists());
 
         let _ = std::fs::remove_dir_all(&root);
     }
