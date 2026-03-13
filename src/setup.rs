@@ -23,11 +23,10 @@ use crate::codex_auth::{
     codex_config_default_openai_base_url, is_openai_codex_provider, provider_allows_empty_api_key,
     qwen_oauth_file_has_access_token, resolve_openai_codex_auth, resolve_qwen_portal_auth,
 };
-use crate::config::{Config, SandboxBackend, SandboxMode};
+use crate::config::{Config, LlmProviderProfile, SandboxBackend, SandboxMode};
 use crate::http_client::llm_user_agent;
 use drugclaw_core::error::DrugClawError;
 use drugclaw_core::text::floor_char_boundary;
-use drugclaw_tools::sandbox::{selected_runtime_cli, DEFAULT_SANDBOX_IMAGE};
 
 use crate::channels::{
     dingtalk, email, feishu, imessage, irc, matrix, nostr, qq, signal, slack, whatsapp,
@@ -71,18 +70,6 @@ const UI_HEADER_HEIGHT: u16 = 4;
 const UI_STATUS_HEIGHT: u16 = 3;
 const CONFIG_BACKUP_DIR_NAME: &str = "drugclaw.config.backups";
 const MAX_CONFIG_BACKUPS: usize = 50;
-
-fn default_sandbox_enabled_for_setup() -> bool {
-    let Some(cli) = selected_runtime_cli(SandboxBackend::Auto) else {
-        return false;
-    };
-    std::process::Command::new(cli)
-        .args(["image", "inspect", DEFAULT_SANDBOX_IMAGE])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
 
 fn telegram_slot_id_key(slot: usize) -> String {
     format!("TELEGRAM_BOT{}_ID", slot)
@@ -152,6 +139,70 @@ fn web_hooks_allowed_session_key_prefixes_key() -> &'static str {
     "WEB_HOOKS_ALLOWED_SESSION_KEY_PREFIXES"
 }
 
+fn a2a_enabled_key() -> &'static str {
+    "A2A_ENABLED"
+}
+
+fn a2a_public_base_url_key() -> &'static str {
+    "A2A_PUBLIC_BASE_URL"
+}
+
+fn a2a_agent_name_key() -> &'static str {
+    "A2A_AGENT_NAME"
+}
+
+fn a2a_agent_description_key() -> &'static str {
+    "A2A_AGENT_DESCRIPTION"
+}
+
+fn a2a_shared_tokens_key() -> &'static str {
+    "A2A_SHARED_TOKENS"
+}
+
+fn a2a_peers_json_key() -> &'static str {
+    "A2A_PEERS_JSON"
+}
+
+fn subagents_max_concurrent_key() -> &'static str {
+    "SUBAGENTS_MAX_CONCURRENT"
+}
+
+fn subagents_max_active_per_chat_key() -> &'static str {
+    "SUBAGENTS_MAX_ACTIVE_PER_CHAT"
+}
+
+fn subagents_run_timeout_secs_key() -> &'static str {
+    "SUBAGENTS_RUN_TIMEOUT_SECS"
+}
+
+fn subagents_announce_to_chat_key() -> &'static str {
+    "SUBAGENTS_ANNOUNCE_TO_CHAT"
+}
+
+fn subagents_max_spawn_depth_key() -> &'static str {
+    "SUBAGENTS_MAX_SPAWN_DEPTH"
+}
+
+fn subagents_max_children_per_run_key() -> &'static str {
+    "SUBAGENTS_MAX_CHILDREN_PER_RUN"
+}
+
+fn subagents_thread_bound_routing_enabled_key() -> &'static str {
+    "SUBAGENTS_THREAD_BOUND_ROUTING_ENABLED"
+}
+
+fn subagents_announce_relay_interval_secs_key() -> &'static str {
+    "SUBAGENTS_ANNOUNCE_RELAY_INTERVAL_SECS"
+}
+
+fn subagents_max_tokens_per_run_key() -> &'static str {
+    "SUBAGENTS_MAX_TOKENS_PER_RUN"
+}
+
+fn subagents_orchestrate_max_workers_key() -> &'static str {
+    "SUBAGENTS_ORCHESTRATE_MAX_WORKERS"
+}
+
 fn telegram_llm_provider_key() -> &'static str {
     "TELEGRAM_LLM_PROVIDER"
 }
@@ -174,6 +225,10 @@ fn discord_llm_api_key_key() -> &'static str {
 
 fn discord_llm_base_url_key() -> &'static str {
     "DISCORD_LLM_BASE_URL"
+}
+
+fn llm_provider_profiles_key() -> &'static str {
+    "LLM_PROVIDER_PROFILES"
 }
 
 fn dynamic_bot_count_field_key(channel: &str) -> String {
@@ -347,6 +402,43 @@ fn parse_accounts_json_value(
         }
     }
     Ok(Some(obj))
+}
+
+fn parse_provider_presets_json_value(
+    raw: &str,
+    field_key: &str,
+) -> Result<HashMap<String, LlmProviderProfile>, DrugClawError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut presets: HashMap<String, LlmProviderProfile> =
+        serde_json::from_str(trimmed).map_err(|e| {
+            DrugClawError::Config(format!(
+                "{field_key} must be a valid JSON object {{preset_id: {{provider,...}}}}: {e}"
+            ))
+        })?;
+    let mut normalized = HashMap::new();
+    for (preset_id, profile) in presets.drain() {
+        let preset_id = preset_id.trim().to_ascii_lowercase();
+        if preset_id.is_empty() {
+            return Err(DrugClawError::Config(format!(
+                "{field_key} contains an empty preset id"
+            )));
+        }
+        if preset_id == "main" {
+            return Err(DrugClawError::Config(format!(
+                "{field_key} preset id 'main' is reserved for the global default"
+            )));
+        }
+        if !is_valid_account_id(&preset_id) {
+            return Err(DrugClawError::Config(format!(
+                "{field_key} contains invalid preset id '{preset_id}' (allowed: letters, numbers, '_' or '-')"
+            )));
+        }
+        normalized.insert(preset_id, profile);
+    }
+    Ok(normalized)
 }
 
 fn append_yaml_value(yaml: &mut String, indent: usize, value: &serde_yaml::Value) {
@@ -715,6 +807,13 @@ const PROVIDER_PRESETS: &[ProviderPreset] = &[
         ],
     },
     ProviderPreset {
+        id: "aliyun-bailian",
+        label: "Alibaba Cloud Bailian",
+        protocol: ProviderProtocol::OpenAiCompat,
+        default_base_url: "https://coding.dashscope.aliyuncs.com/v1",
+        models: &["qwen3.5-plus", "qwen3-max", "qwen-plus-latest"],
+    },
+    ProviderPreset {
         id: "alibaba",
         label: "Alibaba Cloud (Qwen / DashScope)",
         protocol: ProviderProtocol::OpenAiCompat,
@@ -833,6 +932,17 @@ const PROVIDER_PRESETS: &[ProviderPreset] = &[
         models: &["grok-4", "grok-4-fast", "grok-3"],
     },
     ProviderPreset {
+        id: "nvidia",
+        label: "NVIDIA NIM",
+        protocol: ProviderProtocol::OpenAiCompat,
+        default_base_url: "https://integrate.api.nvidia.com/v1",
+        models: &[
+            "meta/llama-3.3-70b-instruct",
+            "meta/llama-3.1-70b-instruct",
+            "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+        ],
+    },
+    ProviderPreset {
         id: "huggingface",
         label: "Hugging Face",
         protocol: ProviderProtocol::OpenAiCompat,
@@ -881,11 +991,36 @@ fn default_model_for_provider(provider: &str) -> &'static str {
         .unwrap_or("gpt-5.2")
 }
 
+fn normalize_setup_provider_id(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if find_provider_preset(trimmed).is_some() {
+        return trimmed.to_ascii_lowercase();
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if let Some(suffix) = lower.strip_prefix("custom") {
+        if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
+            return "custom".to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
 fn provider_display(provider: &str) -> String {
     if let Some(preset) = find_provider_preset(provider) {
         format!("{} - {}", preset.id, preset.label)
     } else {
         format!("{provider} - custom")
+    }
+}
+
+fn parse_bool_like(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" => Some(true),
+        "false" | "0" | "no" | "" => Some(false),
+        _ => None,
     }
 }
 
@@ -933,15 +1068,16 @@ struct SetupApp {
     completion_summary: Vec<String>,
     llm_override_page: Option<LlmOverridePage>,
     llm_override_picker: Option<LlmOverridePicker>,
+    provider_preset_page: Option<ProviderPresetPage>,
 }
 
 #[derive(Clone)]
 struct LlmOverridePage {
     title: String,
-    model_key: String,
     provider_key: String,
     api_key_key: String,
     base_url_key: String,
+    show_legacy_fields: bool,
     selected: usize,
     editing: bool,
 }
@@ -952,6 +1088,43 @@ struct LlmOverridePicker {
     target_key: String,
     options: Vec<(String, String)>,
     selected: usize,
+}
+
+#[derive(Clone)]
+struct ProviderPresetDraft {
+    id: String,
+    provider: String,
+    api_key: String,
+    base_url: String,
+    user_agent: String,
+    default_model: String,
+    show_thinking: bool,
+}
+
+struct ProviderPresetValidationRequest {
+    profile_id: String,
+    provider: String,
+    api_key: String,
+    base_url: String,
+    user_agent: String,
+    model: String,
+    codex_account_id: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProviderPresetPageMode {
+    List,
+    Edit,
+}
+
+#[derive(Clone)]
+struct ProviderPresetPage {
+    entries: Vec<ProviderPresetDraft>,
+    selected: usize,
+    mode: ProviderPresetPageMode,
+    field_selected: usize,
+    editing: bool,
+    picker: Option<LlmOverridePicker>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -982,10 +1155,12 @@ impl SetupApp {
     fn new() -> Self {
         // Try loading from existing config file first, then fall back to env vars
         let existing = Self::load_existing_config();
-        let provider = existing
-            .get("LLM_PROVIDER")
-            .cloned()
-            .unwrap_or_else(|| "anthropic".into());
+        let provider = normalize_setup_provider_id(
+            &existing
+                .get("LLM_PROVIDER")
+                .cloned()
+                .unwrap_or_else(|| "anthropic".into()),
+        );
         let default_model = default_model_for_provider(&provider);
         let default_base_url = find_provider_preset(&provider)
             .map(|p| p.default_base_url)
@@ -995,10 +1170,6 @@ impl SetupApp {
             .get("ENABLED_CHANNELS")
             .cloned()
             .unwrap_or_else(|| "web".into());
-        let sandbox_enabled_default = existing
-            .get("SANDBOX_ENABLED")
-            .cloned()
-            .unwrap_or_else(|| default_sandbox_enabled_for_setup().to_string());
 
         let mut app = Self {
             fields: vec![
@@ -1050,6 +1221,166 @@ impl SetupApp {
                     secret: false,
                 },
                 Field {
+                    key: a2a_enabled_key().into(),
+                    label: "Enable A2A HTTP integration (true/false)".into(),
+                    value: existing
+                        .get(a2a_enabled_key())
+                        .cloned()
+                        .unwrap_or_else(|| "false".into()),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: a2a_public_base_url_key().into(),
+                    label: "A2A public base URL (optional)".into(),
+                    value: existing
+                        .get(a2a_public_base_url_key())
+                        .cloned()
+                        .unwrap_or_default(),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: a2a_agent_name_key().into(),
+                    label: "A2A agent name (optional)".into(),
+                    value: existing
+                        .get(a2a_agent_name_key())
+                        .cloned()
+                        .unwrap_or_default(),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: a2a_agent_description_key().into(),
+                    label: "A2A agent description (optional)".into(),
+                    value: existing
+                        .get(a2a_agent_description_key())
+                        .cloned()
+                        .unwrap_or_default(),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: a2a_shared_tokens_key().into(),
+                    label: "A2A shared bearer tokens (csv, optional)".into(),
+                    value: existing
+                        .get(a2a_shared_tokens_key())
+                        .cloned()
+                        .unwrap_or_default(),
+                    required: false,
+                    secret: true,
+                },
+                Field {
+                    key: a2a_peers_json_key().into(),
+                    label: "A2A peers JSON ({name:{base_url,...}}, optional)".into(),
+                    value: existing
+                        .get(a2a_peers_json_key())
+                        .cloned()
+                        .unwrap_or_default(),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: subagents_max_concurrent_key().into(),
+                    label: "Subagents max concurrent runs".into(),
+                    value: existing
+                        .get(subagents_max_concurrent_key())
+                        .cloned()
+                        .unwrap_or_else(|| "4".into()),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: subagents_max_active_per_chat_key().into(),
+                    label: "Subagents max active runs per chat".into(),
+                    value: existing
+                        .get(subagents_max_active_per_chat_key())
+                        .cloned()
+                        .unwrap_or_else(|| "5".into()),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: subagents_run_timeout_secs_key().into(),
+                    label: "Subagents run timeout secs".into(),
+                    value: existing
+                        .get(subagents_run_timeout_secs_key())
+                        .cloned()
+                        .unwrap_or_else(|| "900".into()),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: subagents_announce_to_chat_key().into(),
+                    label: "Subagents announce to chat (true/false)".into(),
+                    value: existing
+                        .get(subagents_announce_to_chat_key())
+                        .cloned()
+                        .unwrap_or_else(|| "true".into()),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: subagents_max_spawn_depth_key().into(),
+                    label: "Subagents max spawn depth".into(),
+                    value: existing
+                        .get(subagents_max_spawn_depth_key())
+                        .cloned()
+                        .unwrap_or_else(|| "1".into()),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: subagents_max_children_per_run_key().into(),
+                    label: "Subagents max children per run".into(),
+                    value: existing
+                        .get(subagents_max_children_per_run_key())
+                        .cloned()
+                        .unwrap_or_else(|| "5".into()),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: subagents_thread_bound_routing_enabled_key().into(),
+                    label: "Subagents thread-bound routing enabled (true/false)".into(),
+                    value: existing
+                        .get(subagents_thread_bound_routing_enabled_key())
+                        .cloned()
+                        .unwrap_or_else(|| "true".into()),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: subagents_announce_relay_interval_secs_key().into(),
+                    label: "Subagents announce relay interval secs".into(),
+                    value: existing
+                        .get(subagents_announce_relay_interval_secs_key())
+                        .cloned()
+                        .unwrap_or_else(|| "15".into()),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: subagents_max_tokens_per_run_key().into(),
+                    label: "Subagents max tokens per run".into(),
+                    value: existing
+                        .get(subagents_max_tokens_per_run_key())
+                        .cloned()
+                        .unwrap_or_else(|| "400000".into()),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: subagents_orchestrate_max_workers_key().into(),
+                    label: "Subagents orchestrate max workers".into(),
+                    value: existing
+                        .get(subagents_orchestrate_max_workers_key())
+                        .cloned()
+                        .unwrap_or_else(|| "5".into()),
+                    required: false,
+                    secret: false,
+                },
+                Field {
                     key: telegram_bot_count_key().into(),
                     label: format!("Telegram bot count (1-{MAX_BOT_SLOTS})"),
                     value: existing
@@ -1061,7 +1392,7 @@ impl SetupApp {
                 },
                 Field {
                     key: "TELEGRAM_MODEL".into(),
-                    label: "Telegram bot model override (optional)".into(),
+                    label: "Telegram LLM provider profile override (optional)".into(),
                     value: existing.get("TELEGRAM_MODEL").cloned().unwrap_or_default(),
                     required: false,
                     secret: false,
@@ -1138,7 +1469,7 @@ impl SetupApp {
                 },
                 Field {
                     key: "DISCORD_MODEL".into(),
-                    label: "Discord bot model override (optional)".into(),
+                    label: "Discord LLM provider profile override (optional)".into(),
                     value: existing.get("DISCORD_MODEL").cloned().unwrap_or_default(),
                     required: false,
                     secret: false,
@@ -1226,11 +1557,21 @@ impl SetupApp {
                 },
                 Field {
                     key: "SHOW_THINKING".into(),
-                    label: "Show thinking/reasoning text (true/false)".into(),
+                    label: "LLM Show thinking/reasoning text (true/false)".into(),
                     value: existing
                         .get("SHOW_THINKING")
                         .cloned()
                         .unwrap_or_else(|| "false".into()),
+                    required: false,
+                    secret: false,
+                },
+                Field {
+                    key: llm_provider_profiles_key().into(),
+                    label: "LLM profiles (optional)".into(),
+                    value: existing
+                        .get(llm_provider_profiles_key())
+                        .cloned()
+                        .unwrap_or_default(),
                     required: false,
                     secret: false,
                 },
@@ -1278,7 +1619,10 @@ impl SetupApp {
                 Field {
                     key: "SANDBOX_ENABLED".into(),
                     label: "Enable sandbox for bash tool (true/false)".into(),
-                    value: sandbox_enabled_default,
+                    value: existing
+                        .get("SANDBOX_ENABLED")
+                        .cloned()
+                        .unwrap_or_else(|| "false".into()),
                     required: false,
                     secret: false,
                 },
@@ -1381,6 +1725,7 @@ impl SetupApp {
             completion_summary: Vec::new(),
             llm_override_page: None,
             llm_override_picker: None,
+            provider_preset_page: None,
         };
 
         for slot in 1..=MAX_BOT_SLOTS {
@@ -1426,7 +1771,7 @@ impl SetupApp {
             });
             app.fields.push(Field {
                 key: telegram_slot_model_key(slot),
-                label: format!("Telegram bot #{slot}: model override (optional)"),
+                label: format!("Telegram bot #{slot}: LLM provider profile override (optional)"),
                 value: existing
                     .get(&telegram_slot_model_key(slot))
                     .cloned()
@@ -1696,6 +2041,88 @@ impl SetupApp {
                             }
                         }
                     }
+                    map.insert(a2a_enabled_key().into(), config.a2a.enabled.to_string());
+                    if let Some(v) = config
+                        .a2a
+                        .public_base_url
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                    {
+                        map.insert(a2a_public_base_url_key().into(), v.to_string());
+                    }
+                    if let Some(v) = config
+                        .a2a
+                        .agent_name
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                    {
+                        map.insert(a2a_agent_name_key().into(), v.to_string());
+                    }
+                    if let Some(v) = config
+                        .a2a
+                        .agent_description
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                    {
+                        map.insert(a2a_agent_description_key().into(), v.to_string());
+                    }
+                    if !config.a2a.shared_tokens.is_empty() {
+                        map.insert(
+                            a2a_shared_tokens_key().into(),
+                            config.a2a.shared_tokens.join(","),
+                        );
+                    }
+                    if !config.a2a.peers.is_empty() {
+                        let peers_json = serde_yaml::to_value(&config.a2a.peers)
+                            .ok()
+                            .and_then(|v| compact_json_string(&v));
+                        if let Some(peers_json) = peers_json {
+                            map.insert(a2a_peers_json_key().into(), peers_json);
+                        }
+                    }
+                    map.insert(
+                        subagents_max_concurrent_key().into(),
+                        config.subagents.max_concurrent.to_string(),
+                    );
+                    map.insert(
+                        subagents_max_active_per_chat_key().into(),
+                        config.subagents.max_active_per_chat.to_string(),
+                    );
+                    map.insert(
+                        subagents_run_timeout_secs_key().into(),
+                        config.subagents.run_timeout_secs.to_string(),
+                    );
+                    map.insert(
+                        subagents_announce_to_chat_key().into(),
+                        config.subagents.announce_to_chat.to_string(),
+                    );
+                    map.insert(
+                        subagents_max_spawn_depth_key().into(),
+                        config.subagents.max_spawn_depth.to_string(),
+                    );
+                    map.insert(
+                        subagents_max_children_per_run_key().into(),
+                        config.subagents.max_children_per_run.to_string(),
+                    );
+                    map.insert(
+                        subagents_thread_bound_routing_enabled_key().into(),
+                        config.subagents.thread_bound_routing_enabled.to_string(),
+                    );
+                    map.insert(
+                        subagents_announce_relay_interval_secs_key().into(),
+                        config.subagents.announce_relay_interval_secs.to_string(),
+                    );
+                    map.insert(
+                        subagents_max_tokens_per_run_key().into(),
+                        config.subagents.max_tokens_per_run.to_string(),
+                    );
+                    map.insert(
+                        subagents_orchestrate_max_workers_key().into(),
+                        config.subagents.orchestrate_max_workers.to_string(),
+                    );
                     let telegram_bot_token = if !config.telegram_bot_token.trim().is_empty() {
                         config.telegram_bot_token
                     } else if let Some(ch_cfg) = config.channels.get("telegram") {
@@ -1717,19 +2144,19 @@ impl SetupApp {
                         .get("telegram")
                         .and_then(resolve_channel_default_account_id)
                         .unwrap_or_else(|| default_account_id().to_string());
-                    let telegram_model = config
+                    let telegram_profile_override = config
                         .channels
                         .get("telegram")
                         .and_then(|ch_cfg| {
                             ch_cfg
-                                .get("model")
+                                .get("provider_preset")
+                                .or_else(|| ch_cfg.get("llm_provider"))
                                 .and_then(|v| {
                                     v.as_str()
                                         .map(str::trim)
                                         .filter(|v| !v.is_empty())
                                         .map(ToOwned::to_owned)
                                 })
-                                .or_else(|| channel_default_account_str_value(ch_cfg, "model"))
                         })
                         .unwrap_or_default();
                     let telegram_allowed_user_ids = config
@@ -1760,7 +2187,11 @@ impl SetupApp {
                     let telegram_llm_provider = config
                         .channels
                         .get("telegram")
-                        .and_then(|ch_cfg| ch_cfg.get("llm_provider"))
+                        .and_then(|ch_cfg| {
+                            ch_cfg
+                                .get("provider_preset")
+                                .or_else(|| ch_cfg.get("llm_provider"))
+                        })
                         .and_then(|v| v.as_str())
                         .map(str::trim)
                         .filter(|v| !v.is_empty())
@@ -1831,24 +2262,27 @@ impl SetupApp {
                         .get("discord")
                         .and_then(resolve_channel_default_account_id)
                         .unwrap_or_else(|| default_account_id().to_string());
-                    let discord_model = config
+                    let discord_profile_override = config
                         .channels
                         .get("discord")
                         .and_then(|ch_cfg| {
-                            channel_default_account_str_value(ch_cfg, "model").or_else(|| {
-                                ch_cfg
-                                    .get("model")
-                                    .and_then(|v| v.as_str())
-                                    .map(str::trim)
-                                    .filter(|v| !v.is_empty())
-                                    .map(ToOwned::to_owned)
-                            })
+                            ch_cfg
+                                .get("provider_preset")
+                                .or_else(|| ch_cfg.get("llm_provider"))
+                                .and_then(|v| v.as_str())
+                                .map(str::trim)
+                                .filter(|v| !v.is_empty())
+                                .map(ToOwned::to_owned)
                         })
                         .unwrap_or_default();
                     let discord_llm_provider = config
                         .channels
                         .get("discord")
-                        .and_then(|ch_cfg| ch_cfg.get("llm_provider"))
+                        .and_then(|ch_cfg| {
+                            ch_cfg
+                                .get("provider_preset")
+                                .or_else(|| ch_cfg.get("llm_provider"))
+                        })
                         .and_then(|v| v.as_str())
                         .map(str::trim)
                         .filter(|v| !v.is_empty())
@@ -1880,7 +2314,7 @@ impl SetupApp {
                         .unwrap_or_default();
                     map.insert("TELEGRAM_BOT_TOKEN".into(), telegram_bot_token.clone());
                     map.insert("TELEGRAM_ACCOUNT_ID".into(), telegram_account_id.clone());
-                    map.insert("TELEGRAM_MODEL".into(), telegram_model.clone());
+                    map.insert("TELEGRAM_MODEL".into(), telegram_profile_override.clone());
                     map.insert(
                         telegram_allowed_user_ids_key().into(),
                         telegram_allowed_user_ids.clone(),
@@ -1953,7 +2387,8 @@ impl SetupApp {
                                         map.insert(telegram_slot_username_key(slot), v.to_string());
                                     }
                                     if let Some(v) = account
-                                        .get("model")
+                                        .get("provider_preset")
+                                        .or_else(|| account.get("llm_provider"))
                                         .and_then(|v| v.as_str())
                                         .map(str::trim)
                                         .filter(|v| !v.is_empty())
@@ -2036,13 +2471,16 @@ impl SetupApp {
                         .get(&telegram_slot_model_key(1))
                         .map(|v| v.trim().is_empty())
                         .unwrap_or(true)
-                        && !telegram_model.trim().is_empty()
+                        && !telegram_profile_override.trim().is_empty()
                     {
-                        map.insert(telegram_slot_model_key(1), telegram_model.clone());
+                        map.insert(
+                            telegram_slot_model_key(1),
+                            telegram_profile_override.clone(),
+                        );
                     }
                     map.insert("DISCORD_BOT_TOKEN".into(), discord_bot_token);
                     map.insert("DISCORD_ACCOUNT_ID".into(), discord_account_id);
-                    map.insert("DISCORD_MODEL".into(), discord_model);
+                    map.insert("DISCORD_MODEL".into(), discord_profile_override);
                     map.insert(discord_llm_provider_key().into(), discord_llm_provider);
                     map.insert(discord_llm_api_key_key().into(), discord_llm_api_key);
                     map.insert(discord_llm_base_url_key().into(), discord_llm_base_url);
@@ -2132,7 +2570,10 @@ impl SetupApp {
                                         );
                                     }
                                     if let Some(v) = account
-                                        .and_then(|a| a.get("llm_provider"))
+                                        .and_then(|a| {
+                                            a.get("provider_preset")
+                                                .or_else(|| a.get("llm_provider"))
+                                        })
                                         .and_then(|v| v.as_str())
                                         .map(str::trim)
                                         .filter(|v| !v.is_empty())
@@ -2201,6 +2642,22 @@ impl SetupApp {
                     }
                     if config.llm_user_agent != crate::http_client::default_llm_user_agent() {
                         map.insert("LLM_USER_AGENT".into(), config.llm_user_agent);
+                    }
+                    let presets_for_setup = if !config.provider_presets.is_empty() {
+                        config.provider_presets.clone()
+                    } else {
+                        config
+                            .llm_providers
+                            .clone()
+                            .into_iter()
+                            .filter(|(alias, _)| !alias.eq_ignore_ascii_case("main"))
+                            .collect()
+                    };
+                    if !presets_for_setup.is_empty() {
+                        let presets_json = serde_json::to_string(&presets_for_setup).ok();
+                        if let Some(presets_json) = presets_json {
+                            map.insert(llm_provider_profiles_key().into(), presets_json);
+                        }
                     }
                     map.insert("SHOW_THINKING".into(), config.show_thinking.to_string());
                     map.insert("DATA_DIR".into(), config.data_dir);
@@ -2331,96 +2788,433 @@ impl SetupApp {
 
     fn set_field_value(&mut self, key: &str, value: String) {
         if let Some(field) = self.fields.iter_mut().find(|f| f.key == key) {
-            field.value = value;
+            field.value = if key == "LLM_PROVIDER" {
+                normalize_setup_provider_id(&value)
+            } else {
+                value
+            };
         }
     }
 
-    fn llm_override_label_for_key(key: &str) -> &'static str {
-        match key {
-            "TELEGRAM_LLM_PROVIDER" => "Provider (optional)",
-            "TELEGRAM_LLM_API_KEY" => "API key (optional)",
-            "TELEGRAM_LLM_BASE_URL" => "Base URL (optional)",
-            "DISCORD_LLM_PROVIDER" => "Provider (optional)",
-            "DISCORD_LLM_API_KEY" => "API key (optional)",
-            "DISCORD_LLM_BASE_URL" => "Base URL (optional)",
-            "TELEGRAM_MODEL" => "Model (optional)",
-            "DISCORD_MODEL" => "Model (optional)",
-            _ if key.ends_with("_LLM_PROVIDER") => "Provider (optional)",
-            _ if key.ends_with("_LLM_API_KEY") => "API key (optional)",
-            _ if key.ends_with("_LLM_BASE_URL") => "Base URL (optional)",
-            _ if key.ends_with("_MODEL") => "Model (optional)",
-            _ => "Value",
-        }
+    fn llm_provider_presets(&self) -> HashMap<String, LlmProviderProfile> {
+        parse_provider_presets_json_value(
+            &self.field_value(llm_provider_profiles_key()),
+            llm_provider_profiles_key(),
+        )
+        .unwrap_or_default()
     }
 
-    fn open_llm_override_page(
-        &mut self,
-        title: String,
-        model_key: String,
-        provider_key: String,
-        api_key_key: String,
-        base_url_key: String,
-    ) {
-        self.llm_override_page = Some(LlmOverridePage {
-            title,
-            model_key,
-            provider_key,
-            api_key_key,
-            base_url_key,
+    fn provider_preset_drafts(&self) -> Vec<ProviderPresetDraft> {
+        let mut entries: Vec<(String, LlmProviderProfile)> =
+            self.llm_provider_presets().into_iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
+            .into_iter()
+            .map(|(id, profile)| ProviderPresetDraft {
+                id,
+                provider: profile.provider.unwrap_or_default(),
+                api_key: profile.api_key.unwrap_or_default(),
+                base_url: profile.llm_base_url.unwrap_or_default(),
+                user_agent: profile.llm_user_agent.unwrap_or_default(),
+                default_model: profile.default_model.unwrap_or_default(),
+                show_thinking: profile.show_thinking.unwrap_or(false),
+            })
+            .collect()
+    }
+
+    fn serialize_provider_preset_drafts(
+        drafts: &[ProviderPresetDraft],
+    ) -> Result<String, DrugClawError> {
+        let mut presets = HashMap::new();
+        for draft in drafts {
+            let id = draft.id.trim().to_ascii_lowercase();
+            if id.is_empty() {
+                continue;
+            }
+            if id == "main" {
+                return Err(DrugClawError::Config(
+                    "provider preset id 'main' is reserved for the global default".into(),
+                ));
+            }
+            if !is_valid_account_id(&id) {
+                return Err(DrugClawError::Config(format!(
+                    "provider preset id '{id}' must use only letters, numbers, '_' or '-'"
+                )));
+            }
+            let profile = LlmProviderProfile {
+                provider: Some(draft.provider.trim().to_ascii_lowercase())
+                    .filter(|v| !v.is_empty()),
+                api_key: Some(draft.api_key.trim().to_string()).filter(|v| !v.is_empty()),
+                llm_base_url: Some(draft.base_url.trim().to_string()).filter(|v| !v.is_empty()),
+                llm_user_agent: Some(draft.user_agent.trim().to_string()).filter(|v| !v.is_empty()),
+                default_model: Some(draft.default_model.trim().to_string())
+                    .filter(|v| !v.is_empty()),
+                models: Vec::new(),
+                show_thinking: Some(draft.show_thinking),
+            };
+            presets.insert(id, profile);
+        }
+        serde_json::to_string(&presets).map_err(|e| {
+            DrugClawError::Config(format!("Failed to serialize provider profiles: {e}"))
+        })
+    }
+
+    fn sync_provider_preset_page_field(&mut self) -> Result<(), DrugClawError> {
+        let Some(page) = self.provider_preset_page.as_ref() else {
+            return Ok(());
+        };
+        let json = Self::serialize_provider_preset_drafts(&page.entries)?;
+        self.set_field_value(llm_provider_profiles_key(), json);
+        Ok(())
+    }
+
+    fn next_provider_preset_id(entries: &[ProviderPresetDraft]) -> String {
+        let mut used = entries
+            .iter()
+            .map(|entry| entry.id.trim().to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        used.sort();
+        for idx in 1usize.. {
+            let candidate = format!("provider{idx}");
+            if !used.iter().any(|id| id == &candidate) {
+                return candidate;
+            }
+        }
+        "provider1".to_string()
+    }
+
+    fn next_cloned_provider_preset_id(entries: &[ProviderPresetDraft], source_id: &str) -> String {
+        let base = source_id.trim().to_ascii_lowercase();
+        if base.is_empty() {
+            return Self::next_provider_preset_id(entries);
+        }
+        let used = entries
+            .iter()
+            .map(|entry| entry.id.trim().to_ascii_lowercase())
+            .collect::<std::collections::HashSet<_>>();
+        for idx in 2usize.. {
+            let candidate = format!("{base}-{idx}");
+            if !used.contains(&candidate) {
+                return candidate;
+            }
+        }
+        format!("{base}-2")
+    }
+
+    fn open_provider_preset_page(&mut self) {
+        self.provider_preset_page = Some(ProviderPresetPage {
+            entries: self.provider_preset_drafts(),
             selected: 0,
+            mode: ProviderPresetPageMode::List,
+            field_selected: 0,
             editing: false,
+            picker: None,
         });
-        self.status = "Editing channel LLM overrides".to_string();
+        self.status = "Editing provider profiles".to_string();
     }
 
-    fn open_llm_override_provider_picker(&mut self) {
-        let Some(page) = self.llm_override_page.as_ref() else {
+    fn provider_preset_references(&self, preset_id: &str) -> Vec<String> {
+        let needle = preset_id.trim();
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let mut refs = Vec::new();
+        if self
+            .field_value(telegram_llm_provider_key())
+            .eq_ignore_ascii_case(needle)
+        {
+            refs.push("telegram channel".to_string());
+        }
+        if self
+            .field_value(discord_llm_provider_key())
+            .eq_ignore_ascii_case(needle)
+        {
+            refs.push("discord channel".to_string());
+        }
+        for slot in 1..=MAX_BOT_SLOTS {
+            if self
+                .field_value(&telegram_slot_model_key(slot))
+                .eq_ignore_ascii_case(needle)
+            {
+                let id = self.field_value(&telegram_slot_id_key(slot));
+                let label = if id.trim().is_empty() {
+                    format!("telegram.bot{slot}")
+                } else {
+                    format!("telegram.{}", id.trim())
+                };
+                refs.push(label);
+            }
+        }
+        for ch in DYNAMIC_CHANNELS {
+            for slot in 1..=MAX_BOT_SLOTS {
+                let key = dynamic_slot_llm_provider_key(ch.name, slot);
+                if self.field_value(&key).eq_ignore_ascii_case(needle) {
+                    let id = self.field_value(&dynamic_slot_id_field_key(ch.name, slot));
+                    let label = if id.trim().is_empty() {
+                        format!("{}.bot{}", ch.name, slot)
+                    } else {
+                        format!("{}.{}", ch.name, id.trim())
+                    };
+                    refs.push(label);
+                }
+            }
+        }
+        refs.sort();
+        refs.dedup();
+        refs
+    }
+
+    fn provider_preset_reference_summary(&self, preset_id: &str) -> String {
+        let refs = self.provider_preset_references(preset_id);
+        if refs.is_empty() {
+            "unused".to_string()
+        } else {
+            format!("{} ref(s)", refs.len())
+        }
+    }
+
+    fn provider_preset_field_labels() -> [&'static str; 7] {
+        [
+            "Preset ID",
+            "Provider",
+            "API key",
+            "Base URL",
+            "Model",
+            "Show thinking",
+            "User-Agent (optional)",
+        ]
+    }
+
+    fn provider_preset_selected_field_value(page: &ProviderPresetPage) -> String {
+        let Some(entry) = page.entries.get(page.selected) else {
+            return String::new();
+        };
+        match page.field_selected {
+            0 => entry.id.clone(),
+            1 => entry.provider.clone(),
+            2 => entry.api_key.clone(),
+            3 => entry.base_url.clone(),
+            4 => entry.default_model.clone(),
+            5 => entry.show_thinking.to_string(),
+            6 => entry.user_agent.clone(),
+            _ => String::new(),
+        }
+    }
+
+    fn rename_provider_preset_references(&mut self, old_id: &str, new_id: &str) -> usize {
+        let old_id = old_id.trim();
+        if old_id.is_empty() || old_id.eq_ignore_ascii_case(new_id.trim()) {
+            return 0;
+        }
+        let mut updated = 0usize;
+        let mut maybe_replace = |key: &str, this: &mut SetupApp| {
+            if this.field_value(key).eq_ignore_ascii_case(old_id) {
+                this.set_field_value(key, new_id.trim().to_string());
+                updated += 1;
+            }
+        };
+        maybe_replace(telegram_llm_provider_key(), self);
+        maybe_replace(discord_llm_provider_key(), self);
+        for slot in 1..=MAX_BOT_SLOTS {
+            maybe_replace(&telegram_slot_model_key(slot), self);
+        }
+        for ch in DYNAMIC_CHANNELS {
+            for slot in 1..=MAX_BOT_SLOTS {
+                let key = dynamic_slot_llm_provider_key(ch.name, slot);
+                maybe_replace(&key, self);
+            }
+        }
+        updated
+    }
+
+    fn selected_provider_preset_id(&self) -> Option<String> {
+        self.provider_preset_page
+            .as_ref()
+            .and_then(|page| page.entries.get(page.selected))
+            .map(|entry| entry.id.trim().to_string())
+            .filter(|id| !id.is_empty())
+    }
+
+    fn clone_selected_provider_preset(&mut self) -> Result<Option<String>, DrugClawError> {
+        let Some(page) = self.provider_preset_page.as_mut() else {
+            return Ok(None);
+        };
+        let Some(selected_entry) = page.entries.get(page.selected).cloned() else {
+            return Ok(None);
+        };
+        let mut cloned = selected_entry.clone();
+        cloned.id = Self::next_cloned_provider_preset_id(&page.entries, &selected_entry.id);
+        page.entries.push(cloned.clone());
+        page.selected = page.entries.len().saturating_sub(1);
+        page.mode = ProviderPresetPageMode::Edit;
+        page.field_selected = 4;
+        page.editing = false;
+        self.sync_provider_preset_page_field()?;
+        Ok(Some(cloned.id))
+    }
+
+    fn delete_selected_provider_preset(
+        &mut self,
+        fallback_to_main: bool,
+    ) -> Result<Vec<String>, DrugClawError> {
+        let Some(preset_id) = self.selected_provider_preset_id() else {
+            return Ok(Vec::new());
+        };
+        let refs = self.provider_preset_references(&preset_id);
+        if !refs.is_empty() && !fallback_to_main {
+            return Err(DrugClawError::Config(format!(
+                "Preset '{preset_id}' is still referenced by {}. Press x to reset those references to main and delete it.",
+                refs.join(", ")
+            )));
+        }
+        let reset_refs = if fallback_to_main { refs } else { Vec::new() };
+        if fallback_to_main {
+            self.rename_provider_preset_references(&preset_id, "");
+        }
+        if let Some(page) = self.provider_preset_page.as_mut() {
+            if page.selected < page.entries.len() {
+                page.entries.remove(page.selected);
+                if page.selected >= page.entries.len() && !page.entries.is_empty() {
+                    page.selected = page.entries.len() - 1;
+                }
+            }
+        }
+        self.sync_provider_preset_page_field()?;
+        Ok(reset_refs)
+    }
+
+    fn set_provider_preset_selected_field_value(&mut self, value: String) {
+        let mut old_id = String::new();
+        let mut rename_target = false;
+        let new_value_for_rename = value.clone();
+        if let Some(page) = self.provider_preset_page.as_ref() {
+            if page.field_selected == 0 {
+                old_id = Self::provider_preset_selected_field_value(page);
+                rename_target = true;
+            }
+        }
+        if let Some(page) = self.provider_preset_page.as_mut() {
+            let Some(entry) = page.entries.get_mut(page.selected) else {
+                return;
+            };
+            match page.field_selected {
+                0 => entry.id = value.clone(),
+                1 => entry.provider = value,
+                2 => entry.api_key = value,
+                3 => entry.base_url = value,
+                4 => entry.default_model = value,
+                5 => entry.show_thinking = parse_bool_like(&value).unwrap_or(false),
+                6 => entry.user_agent = value,
+                _ => {}
+            }
+        }
+        if rename_target {
+            self.rename_provider_preset_references(&old_id, &new_value_for_rename);
+        }
+    }
+
+    fn toggle_selected_provider_preset_show_thinking(&mut self) {
+        if let Some(page) = self.provider_preset_page.as_mut() {
+            let Some(entry) = page.entries.get_mut(page.selected) else {
+                return;
+            };
+            entry.show_thinking = !entry.show_thinking;
+        }
+    }
+
+    fn clear_selected_provider_preset_field(&mut self) {
+        self.set_provider_preset_selected_field_value(String::new());
+    }
+
+    fn provider_preset_selected_field_default(&self) -> Option<String> {
+        let page = self.provider_preset_page.as_ref()?;
+        let entry = page.entries.get(page.selected)?;
+        match page.field_selected {
+            0 => Some(SetupApp::next_provider_preset_id(&page.entries)),
+            1 => Some("anthropic".to_string()),
+            2 => Some(String::new()),
+            3 => Some(
+                find_provider_preset(&entry.provider)
+                    .map(|preset| preset.default_base_url.to_string())
+                    .unwrap_or_default(),
+            ),
+            4 => Some(default_model_for_provider(&entry.provider).to_string()),
+            5 => Some("false".to_string()),
+            6 => Some(String::new()),
+            _ => None,
+        }
+    }
+
+    fn restore_selected_provider_preset_field_default(&mut self) -> Option<String> {
+        let default = self.provider_preset_selected_field_default()?;
+        self.set_provider_preset_selected_field_value(default.clone());
+        Some(default)
+    }
+
+    fn open_provider_preset_provider_picker(&mut self) {
+        let Some(page) = self.provider_preset_page.as_ref() else {
             return;
         };
-        let current = self.field_value(&page.provider_key);
-        let mut options = Vec::new();
-        for preset in PROVIDER_PRESETS {
+        let current = page
+            .entries
+            .get(page.selected)
+            .map(|entry| entry.provider.clone())
+            .unwrap_or_default();
+        let mut options = PROVIDER_PRESETS
+            .iter()
+            .map(|preset| {
+                (
+                    format!("{} - {}", preset.id, preset.label),
+                    preset.id.to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        if !current.trim().is_empty()
+            && !options
+                .iter()
+                .any(|(_, value)| value.eq_ignore_ascii_case(current.trim()))
+        {
             options.push((
-                format!("{} - {}", preset.id, preset.label),
-                preset.id.to_string(),
+                format!("{} - legacy/manual", current.trim()),
+                current.clone(),
             ));
         }
         let selected = options
             .iter()
-            .position(|(_, value)| value.eq_ignore_ascii_case(&current))
+            .position(|(_, value)| value.eq_ignore_ascii_case(current.trim()))
             .unwrap_or(0);
-        self.llm_override_picker = Some(LlmOverridePicker {
-            title: "Select Provider".to_string(),
-            target_key: page.provider_key.clone(),
-            options,
-            selected,
-        });
+        if let Some(page_mut) = self.provider_preset_page.as_mut() {
+            page_mut.picker = Some(LlmOverridePicker {
+                title: "Select Provider".to_string(),
+                target_key: "provider".to_string(),
+                options,
+                selected,
+            });
+        }
     }
 
-    fn open_llm_override_model_picker(&mut self) {
-        let Some(page) = self.llm_override_page.as_ref() else {
-            return;
+    fn open_provider_preset_model_picker(&mut self) {
+        let (provider_value, current_default_model) = {
+            let Some(page) = self.provider_preset_page.as_ref() else {
+                return;
+            };
+            let Some(entry) = page.entries.get(page.selected) else {
+                return;
+            };
+            (entry.provider.clone(), entry.default_model.clone())
         };
-        let provider = self.field_value(&page.provider_key);
+        let provider = provider_value.trim().to_string();
         let Some(preset) = find_provider_preset(&provider) else {
-            if let Some(page_mut) = self.llm_override_page.as_mut() {
+            if let Some(page_mut) = self.provider_preset_page.as_mut() {
                 page_mut.editing = true;
             }
             self.status = "Unknown provider; switched to manual model input".to_string();
             return;
         };
-        if preset.models.is_empty() {
-            if let Some(page_mut) = self.llm_override_page.as_mut() {
-                page_mut.editing = true;
-            }
-            self.status = "No preset models; switched to manual model input".to_string();
-            return;
-        }
-        let current = self.field_value(&page.model_key);
         let mut options = preset
             .models
             .iter()
-            .map(|m| ((*m).to_string(), (*m).to_string()))
+            .map(|model| ((*model).to_string(), (*model).to_string()))
             .collect::<Vec<_>>();
         options.push((
             MODEL_PICKER_MANUAL_INPUT.to_string(),
@@ -2428,11 +3222,189 @@ impl SetupApp {
         ));
         let selected = options
             .iter()
-            .position(|(_, value)| value == &current)
+            .position(|(_, value)| value == &current_default_model)
             .unwrap_or(options.len().saturating_sub(1));
+        if let Some(page_mut) = self.provider_preset_page.as_mut() {
+            page_mut.picker = Some(LlmOverridePicker {
+                title: format!("Select Model ({provider})"),
+                target_key: "default_model".to_string(),
+                options,
+                selected,
+            });
+        }
+    }
+
+    fn apply_provider_preset_picker_selection(&mut self) {
+        let status = {
+            let Some(page) = self.provider_preset_page.as_mut() else {
+                return;
+            };
+            let Some(picker) = page.picker.take() else {
+                return;
+            };
+            let Some((_, value)) = picker.options.get(picker.selected) else {
+                return;
+            };
+            if value == MODEL_PICKER_MANUAL_INPUT {
+                page.editing = true;
+                page.field_selected = 5;
+                self.status = "Editing default model (manual input)".to_string();
+                return;
+            }
+            let Some(entry) = page.entries.get_mut(page.selected) else {
+                return;
+            };
+            match picker.target_key.as_str() {
+                "provider" => {
+                    let old_provider = entry.provider.clone();
+                    let old_base_url = entry.base_url.clone();
+                    let old_model = entry.default_model.clone();
+                    entry.provider = value.clone();
+                    let old_default_base_url = find_provider_preset(&old_provider)
+                        .map(|preset| preset.default_base_url)
+                        .unwrap_or("");
+                    let next_default_base_url = find_provider_preset(value)
+                        .map(|preset| preset.default_base_url)
+                        .unwrap_or("");
+                    if old_base_url.trim().is_empty() || old_base_url == old_default_base_url {
+                        entry.base_url = next_default_base_url.to_string();
+                    }
+                    let old_model_in_old_preset = find_provider_preset(&old_provider)
+                        .map(|preset| preset.models.iter().any(|model| *model == old_model))
+                        .unwrap_or(false);
+                    if old_model.trim().is_empty() || old_model_in_old_preset {
+                        entry.default_model = default_model_for_provider(value).to_string();
+                    }
+                }
+                "default_model" => entry.default_model = value.clone(),
+                _ => {}
+            }
+            Some(format!("Updated provider preset {}", entry.id))
+        };
+        let _ = self.sync_provider_preset_page_field();
+        if let Some(status) = status {
+            self.status = status;
+        }
+    }
+
+    fn llm_provider_preset_choices(&self, current: &str) -> Vec<(String, String)> {
+        let mut options = vec![("main (global default)".to_string(), String::new())];
+        let mut presets: Vec<(String, LlmProviderProfile)> =
+            self.llm_provider_presets().into_iter().collect();
+        presets.sort_by(|a, b| a.0.cmp(&b.0));
+        for (preset_id, profile) in presets {
+            let provider = profile.provider.unwrap_or_else(|| preset_id.clone());
+            let model = profile.default_model.unwrap_or_default();
+            let suffix = if model.is_empty() {
+                provider
+            } else {
+                format!("{provider} / {model}")
+            };
+            options.push((format!("{preset_id} - {suffix}"), preset_id));
+        }
+        let trimmed_current = current.trim();
+        if !trimmed_current.is_empty()
+            && !options
+                .iter()
+                .any(|(_, value)| value.eq_ignore_ascii_case(trimmed_current))
+        {
+            options.push((
+                format!("{trimmed_current} - legacy/manual"),
+                trimmed_current.to_string(),
+            ));
+        }
+        options
+    }
+
+    fn llm_override_uses_legacy_fields(
+        &self,
+        provider_key: &str,
+        api_key_key: &str,
+        base_url_key: &str,
+    ) -> bool {
+        let provider = self.field_value(provider_key);
+        let api_key = self.field_value(api_key_key);
+        let base_url = self.field_value(base_url_key);
+        if !api_key.is_empty() || !base_url.is_empty() {
+            return true;
+        }
+        let provider = provider.trim();
+        if provider.is_empty() {
+            return false;
+        }
+        !self
+            .llm_provider_presets()
+            .keys()
+            .any(|preset| preset.eq_ignore_ascii_case(provider))
+    }
+
+    fn llm_override_label_for_key(key: &str) -> &'static str {
+        match key {
+            "TELEGRAM_LLM_PROVIDER" => "Preset ID (optional; main=global)",
+            "TELEGRAM_LLM_API_KEY" => "API key (optional)",
+            "TELEGRAM_LLM_BASE_URL" => "Base URL (optional)",
+            "DISCORD_LLM_PROVIDER" => "Preset ID (optional; main=global)",
+            "DISCORD_LLM_API_KEY" => "API key (optional)",
+            "DISCORD_LLM_BASE_URL" => "Base URL (optional)",
+            "TELEGRAM_MODEL" => "Preset ID (optional; main=global)",
+            "DISCORD_MODEL" => "Preset ID (optional; main=global)",
+            _ if key.ends_with("_LLM_PROVIDER") => "Preset ID (optional; main=global)",
+            _ if key.ends_with("_LLM_API_KEY") => "API key (optional)",
+            _ if key.ends_with("_LLM_BASE_URL") => "Base URL (optional)",
+            _ if key.ends_with("_MODEL") => "Preset ID (optional; main=global)",
+            _ => "Value",
+        }
+    }
+
+    fn open_llm_override_page(
+        &mut self,
+        title: String,
+        provider_key: String,
+        api_key_key: String,
+        base_url_key: String,
+    ) {
+        let show_legacy_fields =
+            self.llm_override_uses_legacy_fields(&provider_key, &api_key_key, &base_url_key);
+        if !show_legacy_fields {
+            self.llm_override_page = None;
+            self.open_llm_override_provider_picker_for_key(&provider_key);
+            self.status = "Selecting LLM provider profile override".to_string();
+            return;
+        }
+        self.llm_override_page = Some(LlmOverridePage {
+            title,
+            provider_key,
+            api_key_key,
+            base_url_key,
+            show_legacy_fields,
+            selected: 0,
+            editing: false,
+        });
+        self.open_llm_override_provider_picker();
+        self.status = "Selecting LLM provider profile override".to_string();
+    }
+
+    fn open_llm_override_provider_picker(&mut self) {
+        let Some(provider_key) = self
+            .llm_override_page
+            .as_ref()
+            .map(|page| page.provider_key.clone())
+        else {
+            return;
+        };
+        self.open_llm_override_provider_picker_for_key(&provider_key);
+    }
+
+    fn open_llm_override_provider_picker_for_key(&mut self, target_key: &str) {
+        let current = self.field_value(target_key);
+        let options = self.llm_provider_preset_choices(&current);
+        let selected = options
+            .iter()
+            .position(|(_, value)| value.eq_ignore_ascii_case(&current))
+            .unwrap_or(0);
         self.llm_override_picker = Some(LlmOverridePicker {
-            title: format!("Select Model ({provider})"),
-            target_key: page.model_key.clone(),
+            title: "Select LLM Provider Profile".to_string(),
+            target_key: target_key.to_string(),
             options,
             selected,
         });
@@ -2445,25 +3417,29 @@ impl SetupApp {
         let Some((_, value)) = picker.options.get(picker.selected) else {
             return;
         };
-        if value == MODEL_PICKER_MANUAL_INPUT {
-            if let Some(page) = self.llm_override_page.as_mut() {
-                page.editing = true;
-                page.selected = 3;
-            }
-            self.status = "Editing model (manual input)".to_string();
-            return;
-        }
         self.set_field_value(&picker.target_key, value.clone());
-        self.status = format!("Updated {}", picker.target_key);
+        let close_after_select = self
+            .llm_override_page
+            .as_ref()
+            .map(|page| !page.show_legacy_fields)
+            .unwrap_or(false);
+        if close_after_select {
+            self.llm_override_page = None;
+        }
+        self.status = if value.trim().is_empty() {
+            "Selected main (global default)".to_string()
+        } else {
+            format!("Selected provider profile: {value}")
+        };
     }
 
-    fn llm_override_keys_for_page(page: &LlmOverridePage) -> [&str; 4] {
-        [
-            page.provider_key.as_str(),
-            page.api_key_key.as_str(),
-            page.base_url_key.as_str(),
-            page.model_key.as_str(),
-        ]
+    fn llm_override_keys_for_page(page: &LlmOverridePage) -> Vec<&str> {
+        let mut keys = vec![page.provider_key.as_str()];
+        if page.show_legacy_fields {
+            keys.push(page.api_key_key.as_str());
+            keys.push(page.base_url_key.as_str());
+        }
+        keys
     }
 
     fn open_llm_override_page_for_field(&mut self, field_key: &str) -> bool {
@@ -2471,7 +3447,6 @@ impl SetupApp {
             self.open_llm_override_page(
                 "Telegram Channel LLM Override".to_string(),
                 "TELEGRAM_MODEL".to_string(),
-                telegram_llm_provider_key().to_string(),
                 telegram_llm_api_key_key().to_string(),
                 telegram_llm_base_url_key().to_string(),
             );
@@ -2481,11 +3456,21 @@ impl SetupApp {
             self.open_llm_override_page(
                 "Discord Channel LLM Override".to_string(),
                 "DISCORD_MODEL".to_string(),
-                discord_llm_provider_key().to_string(),
                 discord_llm_api_key_key().to_string(),
                 discord_llm_base_url_key().to_string(),
             );
             return true;
+        }
+        for slot in 1..=MAX_BOT_SLOTS {
+            if field_key == telegram_slot_model_key(slot) {
+                self.open_llm_override_page(
+                    format!("Telegram Bot #{slot} LLM Override"),
+                    telegram_slot_model_key(slot),
+                    dynamic_slot_llm_api_key_key("telegram", slot),
+                    dynamic_slot_llm_base_url_key("telegram", slot),
+                );
+                return true;
+            }
         }
         for ch in DYNAMIC_CHANNELS {
             for slot in 1..=MAX_BOT_SLOTS {
@@ -2493,8 +3478,7 @@ impl SetupApp {
                 if field_key == model_key {
                     self.open_llm_override_page(
                         format!("{} bot #{slot} LLM Override", ch.name),
-                        model_key,
-                        dynamic_slot_llm_provider_key(ch.name, slot),
+                        model_key.clone(),
                         dynamic_slot_llm_api_key_key(ch.name, slot),
                         dynamic_slot_llm_base_url_key(ch.name, slot),
                     );
@@ -2507,47 +3491,62 @@ impl SetupApp {
 
     fn llm_provider_key_for_model_field(field_key: &str) -> Option<String> {
         if field_key == "TELEGRAM_MODEL" {
-            return Some(telegram_llm_provider_key().to_string());
+            return Some("TELEGRAM_MODEL".to_string());
         }
         if field_key == "DISCORD_MODEL" {
-            return Some(discord_llm_provider_key().to_string());
+            return Some("DISCORD_MODEL".to_string());
+        }
+        for slot in 1..=MAX_BOT_SLOTS {
+            if field_key == telegram_slot_model_key(slot) {
+                return Some(telegram_slot_model_key(slot));
+            }
         }
         for ch in DYNAMIC_CHANNELS {
             for slot in 1..=MAX_BOT_SLOTS {
                 if field_key == dynamic_slot_field_key(ch.name, slot, "model") {
-                    return Some(dynamic_slot_llm_provider_key(ch.name, slot));
+                    return Some(dynamic_slot_field_key(ch.name, slot, "model"));
                 }
             }
         }
         None
     }
 
-    fn llm_override_related_keys_for_model_field(field_key: &str) -> Option<[String; 4]> {
+    fn llm_override_related_keys_for_model_field(field_key: &str) -> Option<Vec<String>> {
         if field_key == "TELEGRAM_MODEL" {
-            return Some([
+            return Some(vec![
+                "TELEGRAM_MODEL".to_string(),
                 telegram_llm_provider_key().to_string(),
                 telegram_llm_api_key_key().to_string(),
                 telegram_llm_base_url_key().to_string(),
-                "TELEGRAM_MODEL".to_string(),
             ]);
         }
         if field_key == "DISCORD_MODEL" {
-            return Some([
+            return Some(vec![
+                "DISCORD_MODEL".to_string(),
                 discord_llm_provider_key().to_string(),
                 discord_llm_api_key_key().to_string(),
                 discord_llm_base_url_key().to_string(),
-                "DISCORD_MODEL".to_string(),
             ]);
+        }
+        for slot in 1..=MAX_BOT_SLOTS {
+            if field_key == telegram_slot_model_key(slot) {
+                return Some(vec![
+                    telegram_slot_model_key(slot),
+                    dynamic_slot_llm_provider_key("telegram", slot),
+                    dynamic_slot_llm_api_key_key("telegram", slot),
+                    dynamic_slot_llm_base_url_key("telegram", slot),
+                ]);
+            }
         }
         for ch in DYNAMIC_CHANNELS {
             for slot in 1..=MAX_BOT_SLOTS {
                 let model_key = dynamic_slot_field_key(ch.name, slot, "model");
                 if field_key == model_key {
-                    return Some([
+                    return Some(vec![
+                        model_key.clone(),
                         dynamic_slot_llm_provider_key(ch.name, slot),
                         dynamic_slot_llm_api_key_key(ch.name, slot),
                         dynamic_slot_llm_base_url_key(ch.name, slot),
-                        model_key,
                     ]);
                 }
             }
@@ -2733,6 +3732,12 @@ impl SetupApp {
             | "WEB_HOOKS_DEFAULT_SESSION_KEY"
             | "WEB_HOOKS_ALLOW_REQUEST_SESSION_KEY"
             | "WEB_HOOKS_ALLOWED_SESSION_KEY_PREFIXES" => self.channel_enabled("web"),
+            "A2A_ENABLED"
+            | "A2A_PUBLIC_BASE_URL"
+            | "A2A_AGENT_NAME"
+            | "A2A_AGENT_DESCRIPTION"
+            | "A2A_SHARED_TOKENS"
+            | "A2A_PEERS_JSON" => true,
             "TELEGRAM_MODEL" | "TELEGRAM_ALLOWED_USER_IDS" | "TELEGRAM_TOPIC_ROUTING" => {
                 self.channel_enabled("telegram")
             }
@@ -3023,6 +4028,10 @@ impl SetupApp {
                 web_hooks_allowed_session_key_prefixes_key()
             ))
         })?;
+        let _ = parse_provider_presets_json_value(
+            &self.field_value(llm_provider_profiles_key()),
+            llm_provider_profiles_key(),
+        )?;
 
         if self.channel_enabled("telegram") {
             let _ = parse_bot_count(
@@ -3287,14 +4296,10 @@ impl SetupApp {
             }
         }
         let show_thinking = self.field_value("SHOW_THINKING");
-        if !show_thinking.is_empty() {
-            let lower = show_thinking.to_ascii_lowercase();
-            let valid = matches!(lower.as_str(), "true" | "false" | "1" | "0" | "yes" | "no");
-            if !valid {
-                return Err(DrugClawError::Config(
-                    "SHOW_THINKING must be true/false (or 1/0)".into(),
-                ));
-            }
+        if !show_thinking.is_empty() && parse_bool_like(&show_thinking).is_none() {
+            return Err(DrugClawError::Config(
+                "SHOW_THINKING must be true/false (or 1/0)".into(),
+            ));
         }
 
         let memory_token_budget_raw = self.field_value("MEMORY_TOKEN_BUDGET");
@@ -3306,6 +4311,47 @@ impl SetupApp {
                 return Err(DrugClawError::Config(
                     "MEMORY_TOKEN_BUDGET must be greater than 0".into(),
                 ));
+            }
+        }
+
+        for key in [
+            subagents_max_concurrent_key(),
+            subagents_max_active_per_chat_key(),
+            subagents_run_timeout_secs_key(),
+            subagents_max_spawn_depth_key(),
+            subagents_max_children_per_run_key(),
+            subagents_announce_relay_interval_secs_key(),
+            subagents_max_tokens_per_run_key(),
+            subagents_orchestrate_max_workers_key(),
+        ] {
+            let raw = self.field_value(key);
+            if raw.is_empty() {
+                continue;
+            }
+            let value = raw
+                .parse::<u64>()
+                .map_err(|_| DrugClawError::Config(format!("{key} must be a positive integer")))?;
+            if value == 0 {
+                return Err(DrugClawError::Config(format!(
+                    "{key} must be greater than 0"
+                )));
+            }
+        }
+
+        for key in [
+            subagents_announce_to_chat_key(),
+            subagents_thread_bound_routing_enabled_key(),
+        ] {
+            let raw = self.field_value(key);
+            if raw.is_empty() {
+                continue;
+            }
+            let lower = raw.to_ascii_lowercase();
+            let valid = matches!(lower.as_str(), "true" | "false" | "1" | "0" | "yes" | "no");
+            if !valid {
+                return Err(DrugClawError::Config(format!(
+                    "{key} must be true/false (or 1/0)"
+                )));
             }
         }
 
@@ -3392,6 +4438,80 @@ impl SetupApp {
         })
         .join()
         .map_err(|_| DrugClawError::Config("Validation thread panicked".into()))?
+    }
+
+    fn selected_provider_preset_validation_request(
+        &self,
+    ) -> Result<ProviderPresetValidationRequest, DrugClawError> {
+        let Some(page) = self.provider_preset_page.as_ref() else {
+            return Err(DrugClawError::Config(
+                "No provider profile is currently selected".into(),
+            ));
+        };
+        let Some(entry) = page.entries.get(page.selected) else {
+            return Err(DrugClawError::Config(
+                "No provider profile is currently selected".into(),
+            ));
+        };
+
+        let provider = entry.provider.trim().to_ascii_lowercase();
+        if provider.is_empty() {
+            return Err(DrugClawError::Config(
+                "Provider profile must set a provider before testing".into(),
+            ));
+        }
+
+        let configured_api_key = entry.api_key.trim().to_string();
+        let (api_key, codex_account_id) = if is_openai_codex_provider(&provider) {
+            let auth = resolve_openai_codex_auth(&configured_api_key)?;
+            (auth.bearer_token, auth.account_id)
+        } else if provider.eq_ignore_ascii_case("qwen-portal") && configured_api_key.is_empty() {
+            let auth = resolve_qwen_portal_auth("")?;
+            (auth.bearer_token, None)
+        } else {
+            (configured_api_key, None)
+        };
+
+        let base_url = entry.base_url.trim().to_string();
+        let user_agent = entry.user_agent.trim().to_string();
+        let model = if entry.default_model.trim().is_empty() {
+            default_model_for_provider(&provider).to_string()
+        } else {
+            entry.default_model.trim().to_string()
+        };
+
+        Ok(ProviderPresetValidationRequest {
+            profile_id: entry.id.clone(),
+            provider,
+            api_key,
+            base_url,
+            user_agent,
+            model,
+            codex_account_id,
+        })
+    }
+
+    fn validate_selected_provider_preset_online(
+        &self,
+    ) -> Result<(String, Vec<String>), DrugClawError> {
+        let request = self.selected_provider_preset_validation_request()?;
+        let profile_id = request.profile_id.clone();
+        let checks = std::thread::spawn(move || {
+            perform_online_validation(
+                false,
+                "",
+                "",
+                &request.provider,
+                &request.api_key,
+                &request.base_url,
+                &request.user_agent,
+                &request.model,
+                request.codex_account_id.as_deref(),
+            )
+        })
+        .join()
+        .map_err(|_| DrugClawError::Config("Validation thread panicked".into()))??;
+        Ok((profile_id, checks))
     }
 
     fn set_provider(&mut self, provider: &str) {
@@ -3611,6 +4731,10 @@ impl SetupApp {
                 });
                 true
             }
+            _ if selected_key == llm_provider_profiles_key() => {
+                self.open_provider_preset_page();
+                true
+            }
             "OVERRIDE_TIMEZONE" => {
                 let options = self.timezone_picker_options();
                 let current = {
@@ -3633,6 +4757,14 @@ impl SetupApp {
                 true
             }
             _ => false,
+        }
+    }
+
+    fn key_display(key: &str) -> String {
+        if key == llm_provider_profiles_key() {
+            "LLM_PROVIDER_PROFILES".to_string()
+        } else {
+            key.to_string()
         }
     }
 
@@ -3776,6 +4908,11 @@ impl SetupApp {
             | "BOT_USERNAME"
             | "WEB_HOOKS_TOKEN"
             | "WEB_HOOKS_ALLOWED_SESSION_KEY_PREFIXES"
+            | "A2A_PUBLIC_BASE_URL"
+            | "A2A_AGENT_NAME"
+            | "A2A_AGENT_DESCRIPTION"
+            | "A2A_SHARED_TOKENS"
+            | "A2A_PEERS_JSON"
             | "TELEGRAM_MODEL"
             | "TELEGRAM_ALLOWED_USER_IDS"
             | "TELEGRAM_TOPIC_ROUTING"
@@ -3788,6 +4925,17 @@ impl SetupApp {
             | "LLM_API_KEY" => String::new(),
             "WEB_HOOKS_DEFAULT_SESSION_KEY" => "hook:ingress".into(),
             "WEB_HOOKS_ALLOW_REQUEST_SESSION_KEY" => "false".into(),
+            "A2A_ENABLED" => "false".into(),
+            "SUBAGENTS_MAX_CONCURRENT" => "4".into(),
+            "SUBAGENTS_MAX_ACTIVE_PER_CHAT" => "5".into(),
+            "SUBAGENTS_RUN_TIMEOUT_SECS" => "900".into(),
+            "SUBAGENTS_ANNOUNCE_TO_CHAT" => "true".into(),
+            "SUBAGENTS_MAX_SPAWN_DEPTH" => "1".into(),
+            "SUBAGENTS_MAX_CHILDREN_PER_RUN" => "5".into(),
+            "SUBAGENTS_THREAD_BOUND_ROUTING_ENABLED" => "true".into(),
+            "SUBAGENTS_ANNOUNCE_RELAY_INTERVAL_SECS" => "15".into(),
+            "SUBAGENTS_MAX_TOKENS_PER_RUN" => "400000".into(),
+            "SUBAGENTS_ORCHESTRATE_MAX_WORKERS" => "5".into(),
             _ if key == telegram_bot_count_key() => TELEGRAM_DEFAULT_BOT_COUNT.to_string(),
             _ if key.starts_with("TELEGRAM_BOT") => {
                 if key.ends_with("_ENABLED") {
@@ -3802,12 +4950,13 @@ impl SetupApp {
                 .map(|p| p.default_base_url.to_string())
                 .unwrap_or_default(),
             "LLM_USER_AGENT" => String::new(),
+            _ if key == llm_provider_profiles_key() => String::new(),
             "SHOW_THINKING" => "false".into(),
             "DATA_DIR" => default_data_dir_for_setup(),
             "OVERRIDE_TIMEZONE" => String::new(),
             "WORKING_DIR" => default_working_dir_for_setup(),
             "SOULS_DIR" => default_souls_dir_for_setup(),
-            "SANDBOX_ENABLED" => default_sandbox_enabled_for_setup().to_string(),
+            "SANDBOX_ENABLED" => "false".into(),
             "HIGH_RISK_TOOL_USER_CONFIRMATION_REQUIRED" => "true".into(),
             "REFLECTOR_ENABLED" => "true".into(),
             "REFLECTOR_INTERVAL_MINS" => "15".into(),
@@ -3877,8 +5026,25 @@ impl SetupApp {
             "REFLECTOR_ENABLED" | "REFLECTOR_INTERVAL_MINS" | "MEMORY_TOKEN_BUDGET" => "Memory",
             "LLM_PROVIDER" | "LLM_API_KEY" | "LLM_MODEL" | "LLM_BASE_URL" | "LLM_USER_AGENT"
             | "SHOW_THINKING" => "Model",
+            _ if key == llm_provider_profiles_key() => "Model",
             "EMBEDDING_PROVIDER" | "EMBEDDING_API_KEY" | "EMBEDDING_BASE_URL"
             | "EMBEDDING_MODEL" | "EMBEDDING_DIM" => "Embedding",
+            "A2A_ENABLED"
+            | "A2A_PUBLIC_BASE_URL"
+            | "A2A_AGENT_NAME"
+            | "A2A_AGENT_DESCRIPTION"
+            | "A2A_SHARED_TOKENS"
+            | "A2A_PEERS_JSON" => "A2A",
+            "SUBAGENTS_MAX_CONCURRENT"
+            | "SUBAGENTS_MAX_ACTIVE_PER_CHAT"
+            | "SUBAGENTS_RUN_TIMEOUT_SECS"
+            | "SUBAGENTS_ANNOUNCE_TO_CHAT"
+            | "SUBAGENTS_MAX_SPAWN_DEPTH"
+            | "SUBAGENTS_MAX_CHILDREN_PER_RUN"
+            | "SUBAGENTS_THREAD_BOUND_ROUTING_ENABLED"
+            | "SUBAGENTS_ANNOUNCE_RELAY_INTERVAL_SECS"
+            | "SUBAGENTS_MAX_TOKENS_PER_RUN"
+            | "SUBAGENTS_ORCHESTRATE_MAX_WORKERS" => "Sub-agents",
             "ENABLED_CHANNELS"
             | "WEB_HOOKS_TOKEN"
             | "WEB_HOOKS_DEFAULT_SESSION_KEY"
@@ -3909,8 +5075,8 @@ impl SetupApp {
     fn field_guidance(key: &str) -> (&'static str, &'static str) {
         match key {
             "LLM_PROVIDER" => (
-                "Select the LLM backend. Presets auto-fill a sensible model/base URL.",
-                "Example: openai, anthropic, deepseek, custom",
+                "Select the LLM backend. Presets auto-fill a sensible model/base URL. OpenRouter models: https://openrouter.ai/models . NVIDIA models: https://build.nvidia.com/models",
+                "Example: openai, anthropic, openrouter, nvidia, custom",
             ),
             "LLM_API_KEY" => (
                 "API key for the selected provider. Leave empty only for providers that allow it.",
@@ -3927,6 +5093,10 @@ impl SetupApp {
             "LLM_USER_AGENT" => (
                 "HTTP User-Agent for LLM requests. Empty means automatic DrugClaw/<version>.",
                 "Example: OpenClaw-Gateway/1.0",
+            ),
+            _ if key == llm_provider_profiles_key() => (
+                "Reusable profile definitions keyed by profile id. Press Enter to open the profile editor.",
+                "Example: create profile provider1 for OpenAI, then let channels/bots select provider1",
             ),
             "SHOW_THINKING" => (
                 "Show model reasoning/thinking text in channel output when provider supports it.",
@@ -3951,6 +5121,70 @@ impl SetupApp {
             "WEB_HOOKS_ALLOWED_SESSION_KEY_PREFIXES" => (
                 "Allowlist of sessionKey prefixes when request override is enabled (csv/JSON array).",
                 "Example: hook:,chat:",
+            ),
+            "A2A_ENABLED" => (
+                "Enable agent-to-agent HTTP endpoints and outbound delegation tools.",
+                "Example: true or false",
+            ),
+            "A2A_PUBLIC_BASE_URL" => (
+                "Public base URL remote peers should use for agent-card discovery and message delivery.",
+                "Example: https://planner.example.com",
+            ),
+            "A2A_AGENT_NAME" => (
+                "Friendly name exposed in the A2A agent card and outbound calls.",
+                "Example: Planner",
+            ),
+            "A2A_AGENT_DESCRIPTION" => (
+                "Short description of this agent's role for other agents.",
+                "Example: Routes work to specialized agents",
+            ),
+            "A2A_SHARED_TOKENS" => (
+                "Inbound bearer tokens accepted by /api/a2a/message (csv/JSON array).",
+                "Example: shared-a2a-token,backup-token",
+            ),
+            "A2A_PEERS_JSON" => (
+                "JSON object of outbound peers keyed by name. Supports base_url, bearer_token, description, default_session_key, enabled.",
+                "Example: {\"worker\":{\"base_url\":\"https://worker.example.com\",\"bearer_token\":\"shared-a2a-token\"}}",
+            ),
+            "SUBAGENTS_MAX_CONCURRENT" => (
+                "Maximum number of subagent runs allowed to execute at the same time across the runtime.",
+                "Example: 4",
+            ),
+            "SUBAGENTS_MAX_ACTIVE_PER_CHAT" => (
+                "Maximum number of active subagent runs allowed in one chat.",
+                "Example: 5",
+            ),
+            "SUBAGENTS_RUN_TIMEOUT_SECS" => (
+                "Per-run timeout for one subagent before it is marked timed out.",
+                "Example: 1800",
+            ),
+            "SUBAGENTS_ANNOUNCE_TO_CHAT" => (
+                "Whether finished subagents post completion notices back to the parent chat.",
+                "Example: true or false",
+            ),
+            "SUBAGENTS_MAX_SPAWN_DEPTH" => (
+                "Maximum recursive subagent nesting depth.",
+                "Example: 1",
+            ),
+            "SUBAGENTS_MAX_CHILDREN_PER_RUN" => (
+                "Maximum active child runs that one parent run may create.",
+                "Example: 5",
+            ),
+            "SUBAGENTS_THREAD_BOUND_ROUTING_ENABLED" => (
+                "Route thread replies to the currently focused subagent when the channel supports it.",
+                "Example: true or false",
+            ),
+            "SUBAGENTS_ANNOUNCE_RELAY_INTERVAL_SECS" => (
+                "Polling interval for relaying pending subagent completion notices.",
+                "Example: 15",
+            ),
+            "SUBAGENTS_MAX_TOKENS_PER_RUN" => (
+                "Default token budget ceiling for sessions_spawn and subagents_orchestrate.",
+                "Example: 240000",
+            ),
+            "SUBAGENTS_ORCHESTRATE_MAX_WORKERS" => (
+                "Worker cap used by subagents_orchestrate fan-out.",
+                "Example: 5",
             ),
             "DATA_DIR" => (
                 "Root directory for runtime data (DB, sessions, memory, skills).",
@@ -4007,12 +5241,12 @@ impl SetupApp {
                 "Example: 123456:ABCDEF...",
             ),
             _ if key.ends_with("_MODEL") => (
-                "Per-channel/per-account model override.",
-                "Example: qwen3.5-plus",
+                "Per-channel/per-account provider profile override entry point. Press Enter to choose profile; model follows the profile.",
+                "Example: choose provider1 or leave empty for main",
             ),
             _ if key.ends_with("_LLM_PROVIDER") => (
-                "Per-channel/per-account LLM provider override.",
-                "Example: openai",
+                "Per-channel/per-account profile id override. Empty means use main/global default.",
+                "Example: provider1",
             ),
             _ if key.ends_with("_LLM_API_KEY") => (
                 "Per-channel/per-account API key override.",
@@ -4045,6 +5279,8 @@ impl SetupApp {
         const ORDER_MEMORY_BASE: usize = 21_000;
         const ORDER_EMBED_BASE: usize = 22_000;
         const ORDER_SANDBOX_BASE: usize = 23_000;
+        const ORDER_A2A_BASE: usize = 24_000;
+        const ORDER_SUBAGENTS_BASE: usize = 25_000;
 
         if key.starts_with("DYN_") {
             for (ch_idx, ch) in DYNAMIC_CHANNELS.iter().enumerate() {
@@ -4100,22 +5336,23 @@ impl SetupApp {
             "LLM_BASE_URL" => ORDER_MODEL_BASE + 3,
             "LLM_USER_AGENT" => ORDER_MODEL_BASE + 4,
             "SHOW_THINKING" => ORDER_MODEL_BASE + 5,
+            _ if key == llm_provider_profiles_key() => ORDER_MODEL_BASE + 6,
             // 2) Channel (dynamic channel fields are placed in the branch above)
             "ENABLED_CHANNELS" => ORDER_CHANNEL_BASE,
             "WEB_HOOKS_TOKEN" => ORDER_CHANNEL_BASE + 1,
             "WEB_HOOKS_DEFAULT_SESSION_KEY" => ORDER_CHANNEL_BASE + 2,
             "WEB_HOOKS_ALLOW_REQUEST_SESSION_KEY" => ORDER_CHANNEL_BASE + 3,
             "WEB_HOOKS_ALLOWED_SESSION_KEY_PREFIXES" => ORDER_CHANNEL_BASE + 4,
-            "TELEGRAM_BOT_TOKEN" => ORDER_CHANNEL_BASE + 10,
-            "BOT_USERNAME" => ORDER_CHANNEL_BASE + 11,
-            "TELEGRAM_ACCOUNT_ID" => ORDER_CHANNEL_BASE + 12,
-            _ if key == telegram_bot_count_key() => ORDER_CHANNEL_BASE + 13,
-            "TELEGRAM_MODEL" => ORDER_CHANNEL_BASE + 14,
-            "TELEGRAM_ALLOWED_USER_IDS" => ORDER_CHANNEL_BASE + 15,
-            "TELEGRAM_TOPIC_ROUTING" => ORDER_CHANNEL_BASE + 16,
-            "TELEGRAM_LLM_PROVIDER" => ORDER_CHANNEL_BASE + 17,
-            "TELEGRAM_LLM_API_KEY" => ORDER_CHANNEL_BASE + 18,
-            "TELEGRAM_LLM_BASE_URL" => ORDER_CHANNEL_BASE + 19,
+            "TELEGRAM_BOT_TOKEN" => ORDER_CHANNEL_BASE + 20,
+            "BOT_USERNAME" => ORDER_CHANNEL_BASE + 21,
+            "TELEGRAM_ACCOUNT_ID" => ORDER_CHANNEL_BASE + 22,
+            _ if key == telegram_bot_count_key() => ORDER_CHANNEL_BASE + 23,
+            "TELEGRAM_MODEL" => ORDER_CHANNEL_BASE + 24,
+            "TELEGRAM_ALLOWED_USER_IDS" => ORDER_CHANNEL_BASE + 25,
+            "TELEGRAM_TOPIC_ROUTING" => ORDER_CHANNEL_BASE + 26,
+            "TELEGRAM_LLM_PROVIDER" => ORDER_CHANNEL_BASE + 27,
+            "TELEGRAM_LLM_API_KEY" => ORDER_CHANNEL_BASE + 28,
+            "TELEGRAM_LLM_BASE_URL" => ORDER_CHANNEL_BASE + 29,
             "DISCORD_BOT_TOKEN" => ORDER_CHANNEL_BASE + 900,
             "DISCORD_ACCOUNT_ID" => ORDER_CHANNEL_BASE + 901,
             "DISCORD_MODEL" => ORDER_CHANNEL_BASE + 902,
@@ -4168,9 +5405,27 @@ impl SetupApp {
             "EMBEDDING_BASE_URL" => ORDER_EMBED_BASE + 2,
             "EMBEDDING_MODEL" => ORDER_EMBED_BASE + 3,
             "EMBEDDING_DIM" => ORDER_EMBED_BASE + 4,
-            // 6) Sandbox (last)
+            // 6) Sandbox
             "SANDBOX_ENABLED" => ORDER_SANDBOX_BASE,
             "HIGH_RISK_TOOL_USER_CONFIRMATION_REQUIRED" => ORDER_SANDBOX_BASE + 1,
+            // 7) A2A
+            "A2A_ENABLED" => ORDER_A2A_BASE,
+            "A2A_PUBLIC_BASE_URL" => ORDER_A2A_BASE + 1,
+            "A2A_AGENT_NAME" => ORDER_A2A_BASE + 2,
+            "A2A_AGENT_DESCRIPTION" => ORDER_A2A_BASE + 3,
+            "A2A_SHARED_TOKENS" => ORDER_A2A_BASE + 4,
+            "A2A_PEERS_JSON" => ORDER_A2A_BASE + 5,
+            // 8) Sub-agents (last)
+            "SUBAGENTS_MAX_CONCURRENT" => ORDER_SUBAGENTS_BASE,
+            "SUBAGENTS_MAX_ACTIVE_PER_CHAT" => ORDER_SUBAGENTS_BASE + 1,
+            "SUBAGENTS_RUN_TIMEOUT_SECS" => ORDER_SUBAGENTS_BASE + 2,
+            "SUBAGENTS_ANNOUNCE_TO_CHAT" => ORDER_SUBAGENTS_BASE + 3,
+            "SUBAGENTS_MAX_SPAWN_DEPTH" => ORDER_SUBAGENTS_BASE + 4,
+            "SUBAGENTS_MAX_CHILDREN_PER_RUN" => ORDER_SUBAGENTS_BASE + 5,
+            "SUBAGENTS_THREAD_BOUND_ROUTING_ENABLED" => ORDER_SUBAGENTS_BASE + 6,
+            "SUBAGENTS_ANNOUNCE_RELAY_INTERVAL_SECS" => ORDER_SUBAGENTS_BASE + 7,
+            "SUBAGENTS_MAX_TOKENS_PER_RUN" => ORDER_SUBAGENTS_BASE + 8,
+            "SUBAGENTS_ORCHESTRATE_MAX_WORKERS" => ORDER_SUBAGENTS_BASE + 9,
             _ => usize::MAX,
         }
     }
@@ -4376,14 +5631,28 @@ fn send_openai_validation_chat_request(
 }
 
 fn extract_openai_error_detail(status: reqwest::StatusCode, text: &str) -> String {
+    fn extract_message(value: &serde_json::Value) -> Option<String> {
+        if let Some(message) = value.get("message").and_then(|m| m.as_str()) {
+            return Some(message.to_string());
+        }
+        if let Some(error) = value.get("error") {
+            if let Some(message) = extract_message(error) {
+                return Some(message);
+            }
+        }
+        if let Some(items) = value.as_array() {
+            for item in items {
+                if let Some(message) = extract_message(item) {
+                    return Some(message);
+                }
+            }
+        }
+        None
+    }
+
     serde_json::from_str::<serde_json::Value>(text)
         .ok()
-        .and_then(|v| {
-            v.get("error")
-                .and_then(|e| e.get("message"))
-                .and_then(|m| m.as_str())
-                .map(|s| s.to_string())
-        })
+        .and_then(|v| extract_message(&v))
         .unwrap_or_else(|| format!("HTTP {status}"))
 }
 
@@ -4535,6 +5804,14 @@ fn save_config_yaml(
     let backup = create_config_backup(path)?;
 
     let get = |key: &str| values.get(key).cloned().unwrap_or_default();
+    let get_with_fallback = |key: &str, default: &str| {
+        values
+            .get(key)
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(default)
+            .to_string()
+    };
     let data_dir = values
         .get("DATA_DIR")
         .cloned()
@@ -4579,6 +5856,97 @@ fn save_config_yaml(
         parse_boolish(&web_hooks_allow_request_session_key_raw, false)?;
     let web_hooks_allowed_session_key_prefixes =
         parse_string_list_field(&get(web_hooks_allowed_session_key_prefixes_key()))?;
+    let a2a_enabled = parse_boolish(&get(a2a_enabled_key()), false)?;
+    let a2a_public_base_url = get(a2a_public_base_url_key()).trim().to_string();
+    let a2a_agent_name = get(a2a_agent_name_key()).trim().to_string();
+    let a2a_agent_description = get(a2a_agent_description_key()).trim().to_string();
+    let a2a_shared_tokens = parse_string_list_field(&get(a2a_shared_tokens_key()))?;
+    let a2a_peers_raw = get(a2a_peers_json_key());
+    let a2a_peers = if a2a_peers_raw.trim().is_empty() {
+        HashMap::new()
+    } else {
+        serde_json::from_str::<HashMap<String, crate::config::A2APeerConfig>>(a2a_peers_raw.trim())
+            .map_err(|e| {
+                DrugClawError::Config(format!(
+                    "{} must be valid JSON object: {e}",
+                    a2a_peers_json_key()
+                ))
+            })?
+    };
+    let provider_presets = parse_provider_presets_json_value(
+        &get(llm_provider_profiles_key()),
+        llm_provider_profiles_key(),
+    )?;
+    let parse_usize_or_default = |raw: String, key: &str, default: usize| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Ok(default);
+        }
+        trimmed
+            .parse::<usize>()
+            .map_err(|e| DrugClawError::Config(format!("{key} must be a positive integer: {e}")))
+    };
+    let parse_u64_or_default = |raw: String, key: &str, default: u64| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Ok(default);
+        }
+        trimmed
+            .parse::<u64>()
+            .map_err(|e| DrugClawError::Config(format!("{key} must be a positive integer: {e}")))
+    };
+    let parse_i64_or_default = |raw: String, key: &str, default: i64| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Ok(default);
+        }
+        trimmed
+            .parse::<i64>()
+            .map_err(|e| DrugClawError::Config(format!("{key} must be a positive integer: {e}")))
+    };
+    let subagents_max_concurrent = parse_usize_or_default(
+        get_with_fallback(subagents_max_concurrent_key(), "4"),
+        subagents_max_concurrent_key(),
+        4,
+    )?;
+    let subagents_max_active_per_chat = parse_usize_or_default(
+        get_with_fallback(subagents_max_active_per_chat_key(), "5"),
+        subagents_max_active_per_chat_key(),
+        5,
+    )?;
+    let subagents_run_timeout_secs = parse_u64_or_default(
+        get_with_fallback(subagents_run_timeout_secs_key(), "900"),
+        subagents_run_timeout_secs_key(),
+        900,
+    )?;
+    let subagents_announce_to_chat = parse_boolish(&get(subagents_announce_to_chat_key()), true)?;
+    let subagents_max_spawn_depth = parse_usize_or_default(
+        get_with_fallback(subagents_max_spawn_depth_key(), "1"),
+        subagents_max_spawn_depth_key(),
+        1,
+    )?;
+    let subagents_max_children_per_run = parse_usize_or_default(
+        get_with_fallback(subagents_max_children_per_run_key(), "5"),
+        subagents_max_children_per_run_key(),
+        5,
+    )?;
+    let subagents_thread_bound_routing_enabled =
+        parse_boolish(&get(subagents_thread_bound_routing_enabled_key()), true)?;
+    let subagents_announce_relay_interval_secs = parse_u64_or_default(
+        get_with_fallback(subagents_announce_relay_interval_secs_key(), "15"),
+        subagents_announce_relay_interval_secs_key(),
+        15,
+    )?;
+    let subagents_max_tokens_per_run = parse_i64_or_default(
+        get_with_fallback(subagents_max_tokens_per_run_key(), "400000"),
+        subagents_max_tokens_per_run_key(),
+        400_000,
+    )?;
+    let subagents_orchestrate_max_workers = parse_usize_or_default(
+        get_with_fallback(subagents_orchestrate_max_workers_key(), "5"),
+        subagents_orchestrate_max_workers_key(),
+        5,
+    )?;
     let telegram_token = if !get("TELEGRAM_BOT_TOKEN").trim().is_empty() {
         get("TELEGRAM_BOT_TOKEN")
     } else {
@@ -4595,11 +5963,7 @@ fn save_config_yaml(
         } else {
             get(&telegram_slot_id_key(1))
         });
-    let telegram_model = if !get("TELEGRAM_MODEL").trim().is_empty() {
-        get("TELEGRAM_MODEL")
-    } else {
-        get(&telegram_slot_model_key(1))
-    };
+    let telegram_profile_override = get("TELEGRAM_MODEL");
     let telegram_topic_routing_raw = get(telegram_topic_routing_key());
     let telegram_topic_routing = if telegram_topic_routing_raw.trim().is_empty() {
         false
@@ -4612,6 +5976,11 @@ fn save_config_yaml(
         })?
     };
     let telegram_llm_provider = get(telegram_llm_provider_key());
+    let telegram_channel_profile_override = if !telegram_profile_override.trim().is_empty() {
+        telegram_profile_override.trim().to_string()
+    } else {
+        telegram_llm_provider.trim().to_string()
+    };
     let telegram_llm_api_key = get(telegram_llm_api_key_key());
     let telegram_llm_base_url = get(telegram_llm_base_url_key());
     let telegram_channel_allowed_user_ids = parse_i64_list_field(
@@ -4625,7 +5994,7 @@ fn save_config_yaml(
         let id = get(&telegram_slot_id_key(slot));
         let token = get(&telegram_slot_token_key(slot));
         let username = get(&telegram_slot_username_key(slot));
-        let model = get(&telegram_slot_model_key(slot));
+        let provider_preset = get(&telegram_slot_model_key(slot));
         let soul_path =
             normalize_soul_path_input(&get(&telegram_slot_soul_path_key(slot)), &souls_dir);
         let allowed_user_ids_raw = get(&telegram_slot_allowed_user_ids_key(slot));
@@ -4649,7 +6018,7 @@ fn save_config_yaml(
         let enabled = parse_boolish(&get(&telegram_slot_enabled_key(slot)), true)?;
         let has_any = !token.trim().is_empty()
             || !username.trim().is_empty()
-            || !model.trim().is_empty()
+            || !provider_preset.trim().is_empty()
             || !soul_path.is_empty()
             || !allowed_user_ids.is_empty()
             || slot_topic_routing_enabled.is_some();
@@ -4677,10 +6046,12 @@ fn save_config_yaml(
                 serde_json::Value::String(username.trim().to_string()),
             );
         }
-        if !model.trim().is_empty() {
+        if !provider_preset.trim().is_empty()
+            && !provider_preset.trim().eq_ignore_ascii_case("main")
+        {
             account.insert(
-                "model".into(),
-                serde_json::Value::String(model.trim().to_string()),
+                "provider_preset".into(),
+                serde_json::Value::String(provider_preset.trim().to_string()),
             );
         }
         if let Some(enabled) = slot_topic_routing_enabled {
@@ -4712,8 +6083,13 @@ fn save_config_yaml(
     };
     let discord_token = get("DISCORD_BOT_TOKEN");
     let discord_account_id = account_id_from_value(&get("DISCORD_ACCOUNT_ID"));
-    let discord_model = get("DISCORD_MODEL");
+    let discord_profile_override = get("DISCORD_MODEL");
     let discord_llm_provider = get(discord_llm_provider_key());
+    let discord_channel_profile_override = if !discord_profile_override.trim().is_empty() {
+        discord_profile_override.trim().to_string()
+    } else {
+        discord_llm_provider.trim().to_string()
+    };
     let discord_llm_api_key = get(discord_llm_api_key_key());
     let discord_llm_base_url = get(discord_llm_base_url_key());
     let discord_accounts_json = get("DISCORD_ACCOUNTS_JSON");
@@ -4738,10 +6114,10 @@ fn save_config_yaml(
 
     let telegram_present = !telegram_token.trim().is_empty()
         || !telegram_username.trim().is_empty()
-        || !telegram_llm_provider.trim().is_empty()
+        || !telegram_channel_profile_override.trim().is_empty()
         || !telegram_llm_api_key.trim().is_empty()
         || !telegram_llm_base_url.trim().is_empty()
-        || !telegram_model.trim().is_empty()
+        || !telegram_profile_override.trim().is_empty()
         || !normalize_soul_path_input(&get(&telegram_slot_soul_path_key(1)), &souls_dir).is_empty()
         || !telegram_channel_allowed_user_ids.is_empty()
         || telegram_accounts
@@ -4750,10 +6126,10 @@ fn save_config_yaml(
             .unwrap_or(false)
         || telegram_bot_count > 1;
     let discord_present = !discord_token.trim().is_empty()
-        || !discord_llm_provider.trim().is_empty()
+        || !discord_channel_profile_override.trim().is_empty()
         || !discord_llm_api_key.trim().is_empty()
         || !discord_llm_base_url.trim().is_empty()
-        || !discord_model.trim().is_empty()
+        || !discord_profile_override.trim().is_empty()
         || discord_accounts
             .as_ref()
             .map(|v| !v.is_empty())
@@ -4830,10 +6206,14 @@ fn save_config_yaml(
     if channel_selected("telegram") || telegram_present {
         yaml.push_str("  telegram:\n");
         yaml.push_str(&format!("    enabled: {}\n", channel_selected("telegram")));
-        if !telegram_llm_provider.trim().is_empty() {
+        if !telegram_channel_profile_override.trim().is_empty()
+            && !telegram_channel_profile_override
+                .trim()
+                .eq_ignore_ascii_case("main")
+        {
             yaml.push_str(&format!(
-                "    llm_provider: \"{}\"\n",
-                telegram_llm_provider.trim()
+                "    provider_preset: \"{}\"\n",
+                telegram_channel_profile_override.trim()
             ));
         }
         if !telegram_llm_api_key.trim().is_empty() {
@@ -4847,9 +6227,6 @@ fn save_config_yaml(
                 "    llm_base_url: \"{}\"\n",
                 telegram_llm_base_url.trim()
             ));
-        }
-        if !telegram_model.trim().is_empty() {
-            yaml.push_str(&format!("    model: \"{}\"\n", telegram_model.trim()));
         }
         if !telegram_topic_routing_raw.trim().is_empty() {
             yaml.push_str("    topic_routing:\n");
@@ -4898,10 +6275,14 @@ fn save_config_yaml(
     if channel_selected("discord") || discord_present {
         yaml.push_str("  discord:\n");
         yaml.push_str(&format!("    enabled: {}\n", channel_selected("discord")));
-        if !discord_llm_provider.trim().is_empty() {
+        if !discord_channel_profile_override.trim().is_empty()
+            && !discord_channel_profile_override
+                .trim()
+                .eq_ignore_ascii_case("main")
+        {
             yaml.push_str(&format!(
-                "    llm_provider: \"{}\"\n",
-                discord_llm_provider.trim()
+                "    provider_preset: \"{}\"\n",
+                discord_channel_profile_override.trim()
             ));
         }
         if !discord_llm_api_key.trim().is_empty() {
@@ -4915,9 +6296,6 @@ fn save_config_yaml(
                 "    llm_base_url: \"{}\"\n",
                 discord_llm_base_url.trim()
             ));
-        }
-        if !discord_model.trim().is_empty() {
-            yaml.push_str(&format!("    model: \"{}\"\n", discord_model.trim()));
         }
         if let Some(accounts) = &discord_accounts {
             let default_id = pick_default_account_id(&discord_account_id, accounts);
@@ -5026,9 +6404,10 @@ fn save_config_yaml(
                 }
             }
             let llm_provider = get(&dynamic_slot_llm_provider_key(ch.name, slot));
-            if !llm_provider.trim().is_empty() {
+            if !llm_provider.trim().is_empty() && !llm_provider.trim().eq_ignore_ascii_case("main")
+            {
                 account.insert(
-                    "llm_provider".into(),
+                    "provider_preset".into(),
                     serde_json::Value::String(llm_provider.trim().to_string()),
                 );
             }
@@ -5064,6 +6443,84 @@ fn save_config_yaml(
             append_yaml_value(&mut yaml, 6, &yaml_accounts);
         }
     }
+    if a2a_enabled
+        || !a2a_public_base_url.is_empty()
+        || !a2a_agent_name.is_empty()
+        || !a2a_agent_description.is_empty()
+        || !a2a_shared_tokens.is_empty()
+        || !a2a_peers.is_empty()
+    {
+        yaml.push_str("a2a:\n");
+        yaml.push_str(&format!("  enabled: {}\n", a2a_enabled));
+        if !a2a_public_base_url.is_empty() {
+            yaml.push_str(&format!(
+                "  public_base_url: {}\n",
+                yaml_double_quoted(&a2a_public_base_url)
+            ));
+        }
+        if !a2a_agent_name.is_empty() {
+            yaml.push_str(&format!(
+                "  agent_name: {}\n",
+                yaml_double_quoted(&a2a_agent_name)
+            ));
+        }
+        if !a2a_agent_description.is_empty() {
+            yaml.push_str(&format!(
+                "  agent_description: {}\n",
+                yaml_double_quoted(&a2a_agent_description)
+            ));
+        }
+        if !a2a_shared_tokens.is_empty() {
+            yaml.push_str("  shared_tokens:\n");
+            for token in &a2a_shared_tokens {
+                yaml.push_str(&format!("    - {}\n", yaml_double_quoted(token)));
+            }
+        }
+        if !a2a_peers.is_empty() {
+            yaml.push_str("  peers:\n");
+            let yaml_peers = serde_yaml::to_value(&a2a_peers)
+                .map_err(|e| DrugClawError::Config(format!("Failed to render A2A peers: {e}")))?;
+            append_yaml_value(&mut yaml, 4, &yaml_peers);
+        }
+    }
+    yaml.push_str("subagents:\n");
+    yaml.push_str(&format!("  max_concurrent: {}\n", subagents_max_concurrent));
+    yaml.push_str(&format!(
+        "  max_active_per_chat: {}\n",
+        subagents_max_active_per_chat
+    ));
+    yaml.push_str(&format!(
+        "  run_timeout_secs: {}\n",
+        subagents_run_timeout_secs
+    ));
+    yaml.push_str(&format!(
+        "  announce_to_chat: {}\n",
+        subagents_announce_to_chat
+    ));
+    yaml.push_str(&format!(
+        "  max_spawn_depth: {}\n",
+        subagents_max_spawn_depth
+    ));
+    yaml.push_str(&format!(
+        "  max_children_per_run: {}\n",
+        subagents_max_children_per_run
+    ));
+    yaml.push_str(&format!(
+        "  thread_bound_routing_enabled: {}\n",
+        subagents_thread_bound_routing_enabled
+    ));
+    yaml.push_str(&format!(
+        "  announce_relay_interval_secs: {}\n",
+        subagents_announce_relay_interval_secs
+    ));
+    yaml.push_str(&format!(
+        "  max_tokens_per_run: {}\n",
+        subagents_max_tokens_per_run
+    ));
+    yaml.push_str(&format!(
+        "  orchestrate_max_workers: {}\n",
+        subagents_orchestrate_max_workers
+    ));
     yaml.push('\n');
 
     yaml.push_str(
@@ -5089,12 +6546,29 @@ fn save_config_yaml(
         yaml.push_str("# LLM HTTP User-Agent (optional)\n");
         yaml.push_str(&format!("llm_user_agent: \"{}\"\n", llm_user_agent));
     }
+    if provider_presets.is_empty() {
+        yaml.push_str("# Optional reusable provider profiles for per-bot/channel selection\n");
+        yaml.push_str("# provider_presets:\n");
+        yaml.push_str("#   provider1:\n");
+        yaml.push_str("#     provider: \"openai\"\n");
+        yaml.push_str("#     api_key: \"sk-...\"\n");
+        yaml.push_str("#     llm_base_url: \"https://example.com/v1\"\n");
+        yaml.push_str("#     llm_user_agent: \"drugclaw/1.0\"\n");
+        yaml.push_str("#     default_model: \"gpt-5.2\"\n");
+        yaml.push_str("#     show_thinking: false\n");
+        yaml.push_str("#   deepseek-hk:\n");
+        yaml.push_str("#     provider: \"deepseek\"\n");
+        yaml.push_str("#     api_key: \"sk-...\"\n");
+    } else {
+        yaml.push_str("provider_presets:\n");
+        let yaml_presets = serde_yaml::to_value(&provider_presets).map_err(|e| {
+            DrugClawError::Config(format!("Failed to render provider_presets: {e}"))
+        })?;
+        append_yaml_value(&mut yaml, 2, &yaml_presets);
+    }
     let show_thinking = values
         .get("SHOW_THINKING")
-        .map(|v| {
-            let lower = v.trim().to_ascii_lowercase();
-            lower == "true" || lower == "1" || lower == "yes"
-        })
+        .and_then(|v| parse_bool_like(v))
         .unwrap_or(false);
     yaml.push_str("# Show model thinking/reasoning text when available\n");
     yaml.push_str(&format!("show_thinking: {}\n", show_thinking));
@@ -5354,15 +6828,19 @@ fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &SetupApp) {
             provider_display(&f.value)
         } else if let Some(provider_key) = SetupApp::llm_provider_key_for_model_field(&f.key) {
             let provider = app.field_value(&provider_key);
-            let model = app.field_value(&f.key);
-            if provider.is_empty() && model.is_empty() {
-                String::new()
-            } else if provider.is_empty() {
-                model
-            } else if model.is_empty() {
-                format!("provider={provider}")
+            if provider.is_empty() {
+                "main".to_string()
             } else {
-                format!("provider={provider}, model={model}")
+                provider
+            }
+        } else if f.key == llm_provider_profiles_key() {
+            let presets = app.llm_provider_presets();
+            if presets.is_empty() {
+                String::new()
+            } else {
+                let mut ids: Vec<String> = presets.keys().cloned().collect();
+                ids.sort();
+                format!("{} preset(s): {}", ids.len(), ids.join(", "))
             }
         } else {
             f.display_value(selected && app.editing)
@@ -5401,7 +6879,10 @@ fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &SetupApp) {
     let mut help_lines = vec![
         Line::from(vec![
             Span::styled("Key: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(field.key.clone(), Style::default().fg(Color::Magenta)),
+            Span::styled(
+                SetupApp::key_display(&field.key),
+                Style::default().fg(Color::Magenta),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Required: ", Style::default().fg(Color::DarkGray)),
@@ -5487,9 +6968,9 @@ fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &SetupApp) {
     .block(Block::default().borders(Borders::ALL).title("Status"));
     frame.render_widget(status, chunks[2]);
 
-    if let Some(page) = &app.llm_override_page {
+    if let Some(page) = &app.provider_preset_page {
         let overlay_area = frame.area().inner(Margin::new(6, 3));
-        if let Some(picker) = &app.llm_override_picker {
+        if let Some(picker) = &page.picker {
             let mut list_lines = Vec::with_capacity(picker.options.len());
             for (i, (label, _)) in picker.options.iter().enumerate() {
                 let selected = i == picker.selected;
@@ -5507,7 +6988,71 @@ fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &SetupApp) {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(picker.title.as_str())
+                        .title("Preset Picker")
+                        .style(Style::default().bg(Color::Black)),
+                )
+                .style(Style::default().bg(Color::Black))
+                .wrap(Wrap { trim: false });
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(overlay, overlay_area);
+        } else if page.mode == ProviderPresetPageMode::List {
+            let mut lines = Vec::new();
+            let next_id_hint = SetupApp::next_provider_preset_id(&page.entries);
+            if page.entries.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "No provider profiles yet. Press a to add one.",
+                    Style::default().fg(Color::White),
+                )));
+            } else {
+                for (idx, entry) in page.entries.iter().enumerate() {
+                    let selected = idx == page.selected;
+                    let pointer = if selected { "▶ " } else { "  " };
+                    let model = if entry.default_model.trim().is_empty() {
+                        "(no default model)".to_string()
+                    } else {
+                        entry.default_model.clone()
+                    };
+                    let ref_summary = app.provider_preset_reference_summary(&entry.id);
+                    let in_use_marker = if ref_summary == "unused" {
+                        String::new()
+                    } else {
+                        "  IN USE".to_string()
+                    };
+                    let summary = format!(
+                        "{}  {} / {}  [{}]{}",
+                        entry.id, entry.provider, model, ref_summary, in_use_marker
+                    );
+                    let style = if selected {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!("{pointer}{summary}"),
+                        style,
+                    )));
+                }
+            }
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "----------------------------------------------------------------",
+                Style::default().fg(Color::Gray),
+            )));
+            lines.push(Line::from(Span::styled(
+                format!("Next default preset id: {next_id_hint}"),
+                Style::default().fg(Color::Gray),
+            )));
+            lines.push(Line::from(Span::styled(
+                "a add · c clone · Enter edit · d delete only if unused · x reset refs to main and delete · Esc close",
+                Style::default().fg(Color::White),
+            )));
+            let overlay = Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Provider Profiles")
                         .style(Style::default().bg(Color::Black)),
                 )
                 .style(Style::default().bg(Color::Black))
@@ -5515,6 +7060,128 @@ fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &SetupApp) {
             frame.render_widget(Clear, overlay_area);
             frame.render_widget(overlay, overlay_area);
         } else {
+            let labels = SetupApp::provider_preset_field_labels();
+            let mut lines = Vec::new();
+            if let Some(entry) = page.entries.get(page.selected) {
+                for (idx, label) in labels.iter().enumerate() {
+                    let selected = idx == page.field_selected;
+                    let pointer = if selected { "▶ " } else { "  " };
+                    let raw = match idx {
+                        0 => entry.id.clone(),
+                        1 => entry.provider.clone(),
+                        2 => {
+                            if selected && page.editing {
+                                entry.api_key.clone()
+                            } else {
+                                mask_secret(&entry.api_key)
+                            }
+                        }
+                        3 => entry.base_url.clone(),
+                        4 => entry.default_model.clone(),
+                        5 => entry.show_thinking.to_string(),
+                        6 => entry.user_agent.clone(),
+                        _ => String::new(),
+                    };
+                    let style = if selected {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!("{pointer}{label}: {raw}"),
+                        style,
+                    )));
+                }
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "----------------------------------------------------------------",
+                    Style::default().fg(Color::Gray),
+                )));
+                let refs = app.provider_preset_references(&entry.id);
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "References: {}",
+                        if refs.is_empty() {
+                            "none".to_string()
+                        } else {
+                            refs.join(", ")
+                        }
+                    ),
+                    Style::default().fg(Color::Gray),
+                )));
+                lines.push(Line::from(Span::styled(
+                    "Delete actions: d = delete only when unused; x = reset all refs to main, then delete",
+                    Style::default().fg(Color::White),
+                )));
+                lines.push(Line::from(Span::styled(
+                    "Use d when you expect zero references. Use x when this preset is still attached somewhere.",
+                    Style::default().fg(Color::Gray),
+                )));
+                if entry.id.strip_prefix("provider").is_some_and(|suffix| {
+                    !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
+                }) {
+                    lines.push(Line::from(Span::styled(
+                        "Tip: providerN ids are convenient for sequential presets; descriptive ids also work.",
+                        Style::default().fg(Color::Gray),
+                    )));
+                } else {
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "Tip: next default preset id would be {}",
+                            SetupApp::next_provider_preset_id(&page.entries)
+                        ),
+                        Style::default().fg(Color::Gray),
+                    )));
+                }
+            }
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Enter edit/select · t test current profile · Esc back · ↑/↓ move · Ctrl+D clear · Ctrl+R default",
+                Style::default().fg(Color::White),
+            )));
+            let overlay = Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Provider Profile Detail")
+                        .style(Style::default().bg(Color::Black)),
+                )
+                .style(Style::default().bg(Color::Black))
+                .wrap(Wrap { trim: false });
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(overlay, overlay_area);
+        }
+    } else if let Some(picker) = &app.llm_override_picker {
+        let overlay_area = frame.area().inner(Margin::new(6, 3));
+        let mut list_lines = Vec::with_capacity(picker.options.len());
+        for (i, (label, _)) in picker.options.iter().enumerate() {
+            let selected = i == picker.selected;
+            let pointer = if selected { "▶ " } else { "  " };
+            let style = if selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            list_lines.push(Line::from(Span::styled(format!("{pointer}{label}"), style)));
+        }
+        let overlay = Paragraph::new(list_lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(picker.title.as_str())
+                    .style(Style::default().bg(Color::Black)),
+            )
+            .style(Style::default().bg(Color::Black))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(Clear, overlay_area);
+        frame.render_widget(overlay, overlay_area);
+    } else if let Some(page) = &app.llm_override_page {
+        let overlay_area = frame.area().inner(Margin::new(6, 3));
+        {
             let keys = SetupApp::llm_override_keys_for_page(page);
             let mut lines = Vec::new();
             for (idx, key) in keys.iter().enumerate() {
@@ -5528,6 +7195,8 @@ fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &SetupApp) {
                     } else {
                         mask_secret(&raw)
                     }
+                } else if *key == page.provider_key.as_str() && raw.trim().is_empty() {
+                    "main (global default)".to_string()
                 } else {
                     raw
                 };
@@ -5544,6 +7213,13 @@ fn draw_ui(frame: &mut ratatui::Frame<'_>, app: &SetupApp) {
                 )));
             }
             lines.push(Line::from(""));
+            if !page.show_legacy_fields {
+                lines.push(Line::from(Span::styled(
+                    "Using preset-only mode. Legacy API/base-url fields stay hidden until an old override exists.",
+                    Style::default().fg(Color::DarkGray),
+                )));
+                lines.push(Line::from(""));
+            }
             lines.push(Line::from(Span::styled(
                 "Enter edit/select · Esc close · ↑/↓/j/k/Ctrl+N/Ctrl+P move",
                 Style::default().fg(Color::DarkGray),
@@ -5760,16 +7436,412 @@ fn run_wizard(mut terminal: DefaultTerminal) -> Result<bool, DrugClawError> {
                 }
             }
 
+            if app.provider_preset_page.is_some() {
+                let mode = app
+                    .provider_preset_page
+                    .as_ref()
+                    .map(|page| page.mode)
+                    .unwrap_or(ProviderPresetPageMode::List);
+                let field_count = SetupApp::provider_preset_field_labels().len();
+                let picker_open = app
+                    .provider_preset_page
+                    .as_ref()
+                    .and_then(|page| page.picker.as_ref())
+                    .is_some();
+                if picker_open {
+                    match key.code {
+                        KeyCode::Esc => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                page.picker = None;
+                            }
+                            app.status = "Selection closed".into();
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                if let Some(picker) = page.picker.as_mut() {
+                                    picker.selected = picker.selected.saturating_sub(1);
+                                }
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                if let Some(picker) = page.picker.as_mut() {
+                                    picker.selected = (picker.selected + 1)
+                                        .min(picker.options.len().saturating_sub(1));
+                                }
+                            }
+                        }
+                        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                if let Some(picker) = page.picker.as_mut() {
+                                    picker.selected = picker.selected.saturating_sub(1);
+                                }
+                            }
+                        }
+                        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                if let Some(picker) = page.picker.as_mut() {
+                                    picker.selected = (picker.selected + 1)
+                                        .min(picker.options.len().saturating_sub(1));
+                                }
+                            }
+                        }
+                        KeyCode::Enter => app.apply_provider_preset_picker_selection(),
+                        _ => {}
+                    }
+                    continue;
+                }
+                match mode {
+                    ProviderPresetPageMode::List => match key.code {
+                        KeyCode::Esc => {
+                            app.provider_preset_page = None;
+                            app.status = "Closed provider profiles".into();
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                page.selected = page.selected.saturating_sub(1);
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                page.selected =
+                                    (page.selected + 1).min(page.entries.len().saturating_sub(1));
+                            }
+                        }
+                        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                page.selected = page.selected.saturating_sub(1);
+                            }
+                        }
+                        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                page.selected =
+                                    (page.selected + 1).min(page.entries.len().saturating_sub(1));
+                            }
+                        }
+                        KeyCode::Char('a') => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                let next_id = SetupApp::next_provider_preset_id(&page.entries);
+                                page.entries.push(ProviderPresetDraft {
+                                    id: next_id,
+                                    provider: "anthropic".to_string(),
+                                    api_key: String::new(),
+                                    base_url: String::new(),
+                                    user_agent: String::new(),
+                                    default_model: default_model_for_provider("anthropic")
+                                        .to_string(),
+                                    show_thinking: false,
+                                });
+                                page.selected = page.entries.len().saturating_sub(1);
+                                page.mode = ProviderPresetPageMode::Edit;
+                                page.field_selected = 0;
+                                page.editing = true;
+                            }
+                            let _ = app.sync_provider_preset_page_field();
+                            app.status = "Added provider profile".into();
+                        }
+                        KeyCode::Char('c') => match app.clone_selected_provider_preset() {
+                            Ok(Some(cloned_id)) => {
+                                app.status = format!("Cloned provider profile as {cloned_id}")
+                            }
+                            Ok(None) => app.status = "No provider profile selected to clone".into(),
+                            Err(e) => app.status = e.to_string(),
+                        },
+                        KeyCode::Char('d') => match app.delete_selected_provider_preset(false) {
+                            Ok(_) => app.status = "Deleted provider profile".into(),
+                            Err(e) => app.status = e.to_string(),
+                        },
+                        KeyCode::Char('x') => match app.delete_selected_provider_preset(true) {
+                            Ok(reset_refs) => {
+                                if reset_refs.is_empty() {
+                                    app.status =
+                                        "Deleted provider profile (no references needed reset)"
+                                            .into();
+                                } else {
+                                    app.status = format!(
+                                        "Reset to main and deleted provider preset: {}",
+                                        reset_refs.join(", ")
+                                    );
+                                }
+                            }
+                            Err(e) => app.status = e.to_string(),
+                        },
+                        KeyCode::Enter => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                if page.entries.is_empty() {
+                                    page.entries.push(ProviderPresetDraft {
+                                        id: SetupApp::next_provider_preset_id(&page.entries),
+                                        provider: "anthropic".to_string(),
+                                        api_key: String::new(),
+                                        base_url: String::new(),
+                                        user_agent: String::new(),
+                                        default_model: default_model_for_provider("anthropic")
+                                            .to_string(),
+                                        show_thinking: false,
+                                    });
+                                    page.selected = 0;
+                                }
+                                page.mode = ProviderPresetPageMode::Edit;
+                                page.field_selected = 0;
+                                page.editing = false;
+                            }
+                            let _ = app.sync_provider_preset_page_field();
+                            app.status = "Editing provider profile".into();
+                        }
+                        _ => {}
+                    },
+                    ProviderPresetPageMode::Edit => match key.code {
+                        KeyCode::Esc => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                if page.editing {
+                                    page.editing = false;
+                                    app.status = "Preset field edit canceled".into();
+                                } else {
+                                    page.mode = ProviderPresetPageMode::List;
+                                    page.field_selected = 0;
+                                    app.status = "Back to provider profile list".into();
+                                }
+                            }
+                        }
+                        KeyCode::Char('t')
+                            if app
+                                .provider_preset_page
+                                .as_ref()
+                                .map(|page| !page.editing)
+                                .unwrap_or(false) =>
+                        {
+                            let profile_id = app
+                                .provider_preset_page
+                                .as_ref()
+                                .and_then(|page| page.entries.get(page.selected))
+                                .map(|entry| entry.id.clone())
+                                .unwrap_or_else(|| "current".to_string());
+                            let app_for_online = app.clone();
+                            match run_with_spinner(
+                                &mut terminal,
+                                &mut app,
+                                &format!("Testing provider profile {profile_id}"),
+                                move || app_for_online.validate_selected_provider_preset_online(),
+                            ) {
+                                Ok((validated_profile_id, checks)) => {
+                                    app.status = format!(
+                                        "Profile {validated_profile_id} passed: {}",
+                                        checks.join(" | ")
+                                    );
+                                }
+                                Err(e) => {
+                                    app.status = format!("Profile {profile_id} test failed: {e}");
+                                }
+                            }
+                        }
+                        KeyCode::Up => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                if !page.editing {
+                                    page.field_selected = page.field_selected.saturating_sub(1);
+                                }
+                            }
+                        }
+                        KeyCode::Down => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                if !page.editing {
+                                    page.field_selected = (page.field_selected + 1)
+                                        .min(field_count.saturating_sub(1));
+                                }
+                            }
+                        }
+                        KeyCode::Char('k')
+                            if app
+                                .provider_preset_page
+                                .as_ref()
+                                .map(|page| !page.editing)
+                                .unwrap_or(false) =>
+                        {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                page.field_selected = page.field_selected.saturating_sub(1);
+                            }
+                        }
+                        KeyCode::Char('j')
+                            if app
+                                .provider_preset_page
+                                .as_ref()
+                                .map(|page| !page.editing)
+                                .unwrap_or(false) =>
+                        {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                page.field_selected =
+                                    (page.field_selected + 1).min(field_count.saturating_sub(1));
+                            }
+                        }
+                        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                if !page.editing {
+                                    page.field_selected = page.field_selected.saturating_sub(1);
+                                }
+                            }
+                        }
+                        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                if !page.editing {
+                                    page.field_selected = (page.field_selected + 1)
+                                        .min(field_count.saturating_sub(1));
+                                }
+                            }
+                        }
+                        KeyCode::Enter => {
+                            let selected_field = app
+                                .provider_preset_page
+                                .as_ref()
+                                .map(|page| page.field_selected)
+                                .unwrap_or(0);
+                            let editing = app
+                                .provider_preset_page
+                                .as_ref()
+                                .map(|page| page.editing)
+                                .unwrap_or(false);
+                            if editing {
+                                if let Some(page) = app.provider_preset_page.as_mut() {
+                                    page.editing = false;
+                                }
+                                let _ = app.sync_provider_preset_page_field();
+                                app.status = "Updated provider profile field".into();
+                            } else if selected_field == 1 {
+                                app.open_provider_preset_provider_picker();
+                            } else if selected_field == 4 {
+                                app.open_provider_preset_model_picker();
+                            } else if selected_field == 5 {
+                                app.toggle_selected_provider_preset_show_thinking();
+                                let _ = app.sync_provider_preset_page_field();
+                                app.status = "Toggled provider profile show_thinking".into();
+                            } else if let Some(page) = app.provider_preset_page.as_mut() {
+                                page.editing = true;
+                                app.status = "Editing provider profile field".into();
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            let editing = app
+                                .provider_preset_page
+                                .as_ref()
+                                .map(|page| page.editing)
+                                .unwrap_or(false);
+                            if editing {
+                                let mut value = app
+                                    .provider_preset_page
+                                    .as_ref()
+                                    .map(SetupApp::provider_preset_selected_field_value)
+                                    .unwrap_or_default();
+                                value.pop();
+                                app.set_provider_preset_selected_field_value(value);
+                                let _ = app.sync_provider_preset_page_field();
+                            }
+                        }
+                        KeyCode::Char('d')
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && app
+                                    .provider_preset_page
+                                    .as_ref()
+                                    .map(|page| !page.editing)
+                                    .unwrap_or(false) =>
+                        {
+                            app.clear_selected_provider_preset_field();
+                            let _ = app.sync_provider_preset_page_field();
+                            if let Some(page) = app.provider_preset_page.as_mut() {
+                                page.editing = false;
+                            }
+                            app.status = "Cleared provider profile field".into();
+                        }
+                        KeyCode::Char('r')
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && app
+                                    .provider_preset_page
+                                    .as_ref()
+                                    .map(|page| !page.editing)
+                                    .unwrap_or(false) =>
+                        {
+                            match app.restore_selected_provider_preset_field_default() {
+                                Some(default) => {
+                                    let _ = app.sync_provider_preset_page_field();
+                                    if let Some(page) = app.provider_preset_page.as_mut() {
+                                        page.editing = false;
+                                    }
+                                    app.status = if default.is_empty() {
+                                        "Restored provider profile field to default (empty)".into()
+                                    } else {
+                                        format!(
+                                            "Restored provider profile field to default: {default}"
+                                        )
+                                    };
+                                }
+                                None => {
+                                    app.status =
+                                        "Selected provider profile field has no default".into();
+                                }
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            let editing = app
+                                .provider_preset_page
+                                .as_ref()
+                                .map(|page| page.editing)
+                                .unwrap_or(false);
+                            if editing {
+                                let mut value = app
+                                    .provider_preset_page
+                                    .as_ref()
+                                    .map(SetupApp::provider_preset_selected_field_value)
+                                    .unwrap_or_default();
+                                value.push(c);
+                                app.set_provider_preset_selected_field_value(value);
+                                let _ = app.sync_provider_preset_page_field();
+                            }
+                        }
+                        _ => {}
+                    },
+                }
+                continue;
+            }
+
+            if app.llm_override_picker.is_some() && app.llm_override_page.is_none() {
+                match key.code {
+                    KeyCode::Esc => {
+                        app.llm_override_picker = None;
+                        app.status = "Selection closed".into();
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if let Some(picker) = app.llm_override_picker.as_mut() {
+                            picker.selected = picker.selected.saturating_sub(1);
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if let Some(picker) = app.llm_override_picker.as_mut() {
+                            picker.selected =
+                                (picker.selected + 1).min(picker.options.len().saturating_sub(1));
+                        }
+                    }
+                    KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if let Some(picker) = app.llm_override_picker.as_mut() {
+                            picker.selected = picker.selected.saturating_sub(1);
+                        }
+                    }
+                    KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if let Some(picker) = app.llm_override_picker.as_mut() {
+                            picker.selected =
+                                (picker.selected + 1).min(picker.options.len().saturating_sub(1));
+                        }
+                    }
+                    KeyCode::Enter => app.apply_llm_override_picker_selection(),
+                    _ => {}
+                }
+                continue;
+            }
+
             if app.llm_override_page.is_some() {
-                let keys: [String; 4] = if let Some(page) = app.llm_override_page.as_ref() {
-                    [
-                        page.provider_key.clone(),
-                        page.api_key_key.clone(),
-                        page.base_url_key.clone(),
-                        page.model_key.clone(),
-                    ]
+                let keys: Vec<String> = if let Some(page) = app.llm_override_page.as_ref() {
+                    SetupApp::llm_override_keys_for_page(page)
+                        .into_iter()
+                        .map(ToOwned::to_owned)
+                        .collect()
                 } else {
-                    [String::new(), String::new(), String::new(), String::new()]
+                    Vec::new()
                 };
                 if app.llm_override_picker.is_some() {
                     match key.code {
@@ -5847,16 +7919,15 @@ fn run_wizard(mut terminal: DefaultTerminal) -> Result<bool, DrugClawError> {
                         }
                     }
                     KeyCode::Enter => {
-                        let (selected_key, provider_key, model_key, editing) =
+                        let (selected_key, provider_key, editing) =
                             if let Some(page) = app.llm_override_page.as_ref() {
                                 (
-                                    keys[page.selected].clone(),
+                                    keys.get(page.selected).cloned().unwrap_or_default(),
                                     page.provider_key.clone(),
-                                    page.model_key.clone(),
                                     page.editing,
                                 )
                             } else {
-                                (String::new(), String::new(), String::new(), false)
+                                (String::new(), String::new(), false)
                             };
                         if editing {
                             if let Some(page) = app.llm_override_page.as_mut() {
@@ -5865,8 +7936,6 @@ fn run_wizard(mut terminal: DefaultTerminal) -> Result<bool, DrugClawError> {
                             app.status = "Updated channel LLM override field".into();
                         } else if selected_key == provider_key {
                             app.open_llm_override_provider_picker();
-                        } else if selected_key == model_key {
-                            app.open_llm_override_model_picker();
                         } else if let Some(page) = app.llm_override_page.as_mut() {
                             page.editing = true;
                             app.status = "Editing channel LLM override field".into();
@@ -5880,7 +7949,9 @@ fn run_wizard(mut terminal: DefaultTerminal) -> Result<bool, DrugClawError> {
                             (false, 0)
                         };
                         if editing {
-                            let key_name = &keys[selected];
+                            let Some(key_name) = keys.get(selected) else {
+                                continue;
+                            };
                             if let Some(field) = app.fields.iter_mut().find(|f| f.key == *key_name)
                             {
                                 field.value.pop();
@@ -5895,7 +7966,9 @@ fn run_wizard(mut terminal: DefaultTerminal) -> Result<bool, DrugClawError> {
                             (false, 0)
                         };
                         if editing {
-                            let key_name = &keys[selected];
+                            let Some(key_name) = keys.get(selected) else {
+                                continue;
+                            };
                             app.set_field_value(key_name, String::new());
                         }
                     }
@@ -5907,7 +7980,9 @@ fn run_wizard(mut terminal: DefaultTerminal) -> Result<bool, DrugClawError> {
                             (false, 0)
                         };
                         if editing {
-                            let key_name = &keys[selected];
+                            let Some(key_name) = keys.get(selected) else {
+                                continue;
+                            };
                             let mut next = app.field_value(key_name);
                             next.push(c);
                             app.set_field_value(key_name, next);
@@ -6020,8 +8095,16 @@ fn run_wizard(mut terminal: DefaultTerminal) -> Result<bool, DrugClawError> {
                     }
                 }
                 KeyCode::Char('e') => {
-                    app.editing = true;
-                    app.status = format!("Editing {}", app.selected_field().key);
+                    let selected_key = app.selected_field().key.clone();
+                    if selected_key == llm_provider_profiles_key() {
+                        app.open_provider_preset_page();
+                        app.status = "Editing provider profiles".into();
+                    } else if app.open_llm_override_page_for_field(&selected_key) {
+                        app.status = format!("Editing {}", selected_key);
+                    } else {
+                        app.editing = true;
+                        app.status = format!("Editing {}", app.selected_field().key);
+                    }
                 }
                 KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     app.clear_selected_field();
@@ -6071,7 +8154,7 @@ pub fn enable_sandbox_in_config() -> Result<String, DrugClawError> {
     let mut cfg = Config::load()?;
     cfg.sandbox.mode = SandboxMode::All;
     cfg.sandbox.backend = SandboxBackend::Auto;
-    cfg.sandbox.no_network = false;
+    cfg.sandbox.no_network = true;
     cfg.sandbox.require_runtime = true;
     cfg.save_yaml(&path.to_string_lossy())?;
     Ok(path.to_string_lossy().to_string())
@@ -6152,6 +8235,108 @@ channels:
     }
 
     #[test]
+    fn test_setup_loads_existing_a2a_settings() {
+        let _guard = env_lock();
+        let temp = std::env::temp_dir().join(format!(
+            "drugclaw_setup_load_a2a_{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp).unwrap();
+        std::fs::write(
+            temp.join("drugclaw.config.yaml"),
+            r#"
+bot_username: bot
+api_key: key
+a2a:
+  enabled: true
+  public_base_url: "https://planner.example.com"
+  agent_name: "Planner"
+  agent_description: "Routes work"
+  shared_tokens:
+    - "shared-a2a-token"
+  peers:
+    worker:
+      enabled: true
+      base_url: "https://worker.example.com"
+      bearer_token: "secret"
+      default_session_key: "a2a:worker"
+"#,
+        )
+        .unwrap();
+
+        let app = SetupApp::new();
+        assert_eq!(app.field_value(a2a_enabled_key()), "true");
+        assert_eq!(
+            app.field_value(a2a_public_base_url_key()),
+            "https://planner.example.com"
+        );
+        assert_eq!(app.field_value(a2a_agent_name_key()), "Planner");
+        assert_eq!(app.field_value(a2a_agent_description_key()), "Routes work");
+        assert_eq!(app.field_value(a2a_shared_tokens_key()), "shared-a2a-token");
+        assert!(app.field_value(a2a_peers_json_key()).contains("\"worker\""));
+
+        std::env::set_current_dir(old_cwd).unwrap();
+        let _ = std::fs::remove_file(temp.join("drugclaw.config.yaml"));
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_setup_loads_existing_provider_presets_from_legacy_llm_providers() {
+        let _guard = env_lock();
+        let temp = std::env::temp_dir().join(format!(
+            "drugclaw_setup_load_provider_presets_{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp).unwrap();
+        std::fs::write(
+            temp.join("drugclaw.config.yaml"),
+            r#"
+bot_username: bot
+llm_provider: anthropic
+api_key: key
+llm_providers:
+  "1":
+    provider: openai
+    api_key: preset-key
+    default_model: gpt-5.2
+"#,
+        )
+        .unwrap();
+
+        let app = SetupApp::new();
+        let presets = app.field_value(llm_provider_profiles_key());
+        assert!(presets.contains("\"1\""));
+        assert!(presets.contains("\"provider\":\"openai\""));
+
+        std::env::set_current_dir(old_cwd).unwrap();
+        let _ = std::fs::remove_file(temp.join("drugclaw.config.yaml"));
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_a2a_fields_render_in_a2a_section() {
+        assert_eq!(SetupApp::section_for_key(a2a_enabled_key()), "A2A");
+        assert_eq!(SetupApp::section_for_key(a2a_public_base_url_key()), "A2A");
+        assert_eq!(SetupApp::section_for_key("ENABLED_CHANNELS"), "Channel");
+    }
+
+    #[test]
+    fn test_subagent_fields_render_in_subagents_section() {
+        assert_eq!(
+            SetupApp::section_for_key(subagents_max_tokens_per_run_key()),
+            "Sub-agents"
+        );
+        assert_eq!(
+            SetupApp::section_for_key(subagents_run_timeout_secs_key()),
+            "Sub-agents"
+        );
+    }
+
+    #[test]
     fn test_setup_loads_existing_telegram_topic_routing() {
         let _guard = env_lock();
         let temp = std::env::temp_dir().join(format!(
@@ -6177,6 +8362,65 @@ channels:
 
         let app = SetupApp::new();
         assert_eq!(app.field_value(telegram_topic_routing_key()), "true");
+
+        std::env::set_current_dir(old_cwd).unwrap();
+        let _ = std::fs::remove_file(temp.join("drugclaw.config.yaml"));
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_setup_loads_existing_subagents_settings() {
+        let _guard = env_lock();
+        let temp = std::env::temp_dir().join(format!(
+            "drugclaw_setup_load_subagents_{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp).unwrap();
+        std::fs::write(
+            temp.join("drugclaw.config.yaml"),
+            r#"
+bot_username: bot
+api_key: key
+subagents:
+  max_concurrent: 8
+  max_active_per_chat: 9
+  run_timeout_secs: 1800
+  announce_to_chat: false
+  max_spawn_depth: 2
+  max_children_per_run: 7
+  thread_bound_routing_enabled: false
+  announce_relay_interval_secs: 30
+  max_tokens_per_run: 240000
+  orchestrate_max_workers: 6
+"#,
+        )
+        .unwrap();
+
+        let app = SetupApp::new();
+        assert_eq!(app.field_value(subagents_max_concurrent_key()), "8");
+        assert_eq!(app.field_value(subagents_max_active_per_chat_key()), "9");
+        assert_eq!(app.field_value(subagents_run_timeout_secs_key()), "1800");
+        assert_eq!(app.field_value(subagents_announce_to_chat_key()), "false");
+        assert_eq!(app.field_value(subagents_max_spawn_depth_key()), "2");
+        assert_eq!(app.field_value(subagents_max_children_per_run_key()), "7");
+        assert_eq!(
+            app.field_value(subagents_thread_bound_routing_enabled_key()),
+            "false"
+        );
+        assert_eq!(
+            app.field_value(subagents_announce_relay_interval_secs_key()),
+            "30"
+        );
+        assert_eq!(
+            app.field_value(subagents_max_tokens_per_run_key()),
+            "240000"
+        );
+        assert_eq!(
+            app.field_value(subagents_orchestrate_max_workers_key()),
+            "6"
+        );
 
         std::env::set_current_dir(old_cwd).unwrap();
         let _ = std::fs::remove_file(temp.join("drugclaw.config.yaml"));
@@ -6236,6 +8480,482 @@ channels:
     }
 
     #[test]
+    fn test_parse_provider_presets_json_rejects_reserved_main() {
+        let err = parse_provider_presets_json_value(
+            r#"{"main":{"provider":"openai"}}"#,
+            llm_provider_profiles_key(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("reserved"));
+    }
+
+    #[test]
+    fn test_normalize_setup_provider_id_collapses_custom_suffixes() {
+        assert_eq!(normalize_setup_provider_id("custom18"), "custom");
+        assert_eq!(normalize_setup_provider_id("CUSTOM42"), "custom");
+        assert_eq!(normalize_setup_provider_id("anthropic"), "anthropic");
+    }
+
+    #[test]
+    fn test_extract_openai_error_detail_handles_array_wrapped_messages() {
+        let detail = extract_openai_error_detail(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"[{"error":{"message":"Request contains an invalid argument."}}]"#,
+        );
+        assert_eq!(detail, "Request contains an invalid argument.");
+    }
+
+    #[test]
+    fn test_save_config_yaml_writes_provider_presets_and_channel_refs() {
+        let yaml_path = std::env::temp_dir().join(format!(
+            "drugclaw_setup_provider_presets_test_{}.yaml",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+
+        let mut values = HashMap::new();
+        values.insert("ENABLED_CHANNELS".into(), "telegram,web".into());
+        values.insert("TELEGRAM_BOT_TOKEN".into(), "new_tok".into());
+        values.insert("BOT_USERNAME".into(), "new_bot".into());
+        values.insert("TELEGRAM_ACCOUNT_ID".into(), "sales".into());
+        values.insert(telegram_llm_provider_key().into(), "1".into());
+        values.insert("LLM_PROVIDER".into(), "anthropic".into());
+        values.insert("LLM_API_KEY".into(), "key".into());
+        values.insert(
+            llm_provider_profiles_key().into(),
+            r#"{"1":{"provider":"openai","api_key":"preset-key","default_model":"gpt-5.2"}}"#
+                .into(),
+        );
+
+        save_config_yaml(&yaml_path, &values).unwrap();
+
+        let s = fs::read_to_string(&yaml_path).unwrap();
+        assert!(s.contains("provider_presets:\n"));
+        assert!(s.contains("  \"1\":\n") || s.contains("  '1':\n") || s.contains("  1:\n"));
+        assert!(s.contains("    provider: openai\n") || s.contains("    provider: \"openai\"\n"));
+        assert!(
+            s.contains("    default_model: gpt-5.2\n")
+                || s.contains("    default_model: \"gpt-5.2\"\n")
+        );
+        assert!(s.contains("    provider_preset: \"1\"\n"));
+
+        let _ = fs::remove_file(&yaml_path);
+        let _ = fs::remove_dir(config_backup_dir_for(&yaml_path));
+    }
+
+    #[test]
+    fn test_save_config_yaml_writes_profile_overrides_as_provider_presets_not_models() {
+        let yaml_path = std::env::temp_dir().join(format!(
+            "drugclaw_setup_provider_profile_override_test_{}.yaml",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+
+        let mut values = HashMap::new();
+        values.insert("ENABLED_CHANNELS".into(), "telegram,discord".into());
+        values.insert("TELEGRAM_MODEL".into(), "gemini".into());
+        values.insert(telegram_slot_id_key(1), "main".into());
+        values.insert(telegram_slot_token_key(1), "telegram-token".into());
+        values.insert(telegram_slot_model_key(1), "gemini".into());
+        values.insert("DISCORD_MODEL".into(), "nvidia".into());
+        values.insert("DISCORD_BOT_TOKEN".into(), "discord-token".into());
+        values.insert("DISCORD_ACCOUNT_ID".into(), "default".into());
+        values.insert("LLM_PROVIDER".into(), "anthropic".into());
+        values.insert("LLM_API_KEY".into(), "key".into());
+
+        save_config_yaml(&yaml_path, &values).unwrap();
+
+        let s = fs::read_to_string(&yaml_path).unwrap();
+        assert!(s.contains("  telegram:\n"));
+        assert!(s.contains("    provider_preset: \"gemini\"\n"));
+        assert!(s.contains("        provider_preset: gemini\n"));
+        assert!(s.contains("  discord:\n"));
+        assert!(s.contains("    provider_preset: \"nvidia\"\n"));
+        assert!(!s.contains("    model: \"gemini\"\n"));
+        assert!(!s.contains("    model: \"nvidia\"\n"));
+        assert!(!s.contains("        model: gemini\n"));
+
+        let _ = fs::remove_file(&yaml_path);
+        let _ = fs::remove_dir(config_backup_dir_for(&yaml_path));
+    }
+
+    #[test]
+    fn test_next_provider_preset_id_uses_provider_prefix() {
+        let entries = vec![
+            ProviderPresetDraft {
+                id: "provider1".into(),
+                provider: "openai".into(),
+                api_key: String::new(),
+                base_url: String::new(),
+                user_agent: String::new(),
+                default_model: String::new(),
+                show_thinking: false,
+            },
+            ProviderPresetDraft {
+                id: "provider3".into(),
+                provider: "anthropic".into(),
+                api_key: String::new(),
+                base_url: String::new(),
+                user_agent: String::new(),
+                default_model: String::new(),
+                show_thinking: false,
+            },
+        ];
+        assert_eq!(SetupApp::next_provider_preset_id(&entries), "provider2");
+    }
+
+    #[test]
+    fn test_next_cloned_provider_preset_id_uses_incrementing_dash_suffix() {
+        let entries = vec![
+            ProviderPresetDraft {
+                id: "provider1".into(),
+                provider: "openai".into(),
+                api_key: String::new(),
+                base_url: String::new(),
+                user_agent: String::new(),
+                default_model: String::new(),
+                show_thinking: false,
+            },
+            ProviderPresetDraft {
+                id: "provider1-2".into(),
+                provider: "openai".into(),
+                api_key: String::new(),
+                base_url: String::new(),
+                user_agent: String::new(),
+                default_model: String::new(),
+                show_thinking: false,
+            },
+        ];
+        assert_eq!(
+            SetupApp::next_cloned_provider_preset_id(&entries, "provider1"),
+            "provider1-3"
+        );
+    }
+
+    #[test]
+    fn test_provider_preset_serialization_keeps_user_agent_and_show_thinking() {
+        let json = SetupApp::serialize_provider_preset_drafts(&[ProviderPresetDraft {
+            id: "provider1".into(),
+            provider: "openai".into(),
+            api_key: "sk-test".into(),
+            base_url: "https://example.com/v1".into(),
+            user_agent: "drugclaw-test/1.0".into(),
+            default_model: "gpt-5.2".into(),
+            show_thinking: true,
+        }])
+        .unwrap();
+        let presets =
+            parse_provider_presets_json_value(&json, llm_provider_profiles_key()).unwrap();
+        let preset = presets.get("provider1").unwrap();
+        assert_eq!(preset.llm_user_agent.as_deref(), Some("drugclaw-test/1.0"));
+        assert_eq!(preset.show_thinking, Some(true));
+    }
+
+    #[test]
+    fn test_clone_selected_provider_preset_creates_dash_suffix_copy_and_focuses_model() {
+        let mut app = SetupApp::new();
+        app.provider_preset_page = Some(ProviderPresetPage {
+            entries: vec![ProviderPresetDraft {
+                id: "provider1".into(),
+                provider: "anthropic".into(),
+                api_key: "sk-test".into(),
+                base_url: "https://example.com/v1".into(),
+                user_agent: "drugclaw-test/1.0".into(),
+                default_model: "claude-sonnet-4-5-20250929".into(),
+                show_thinking: true,
+            }],
+            selected: 0,
+            mode: ProviderPresetPageMode::List,
+            field_selected: 0,
+            editing: false,
+            picker: None,
+        });
+
+        let cloned_id = app.clone_selected_provider_preset().unwrap().unwrap();
+
+        assert_eq!(cloned_id, "provider1-2");
+        let page = app.provider_preset_page.as_ref().unwrap();
+        assert_eq!(page.entries.len(), 2);
+        assert_eq!(page.selected, 1);
+        assert!(matches!(page.mode, ProviderPresetPageMode::Edit));
+        assert_eq!(page.field_selected, 4);
+        assert!(!page.editing);
+        assert_eq!(page.entries[1].id, "provider1-2");
+        assert_eq!(page.entries[1].provider, "anthropic");
+        assert_eq!(page.entries[1].default_model, "claude-sonnet-4-5-20250929");
+        assert!(page.entries[1].show_thinking);
+    }
+
+    #[test]
+    fn test_selected_provider_preset_validation_request_uses_current_entry_values() {
+        let mut app = SetupApp::new();
+        app.provider_preset_page = Some(ProviderPresetPage {
+            entries: vec![ProviderPresetDraft {
+                id: "provider1".into(),
+                provider: "anthropic".into(),
+                api_key: "sk-test".into(),
+                base_url: "https://example.com/v1".into(),
+                user_agent: "drugclaw-test/1.0".into(),
+                default_model: String::new(),
+                show_thinking: false,
+            }],
+            selected: 0,
+            mode: ProviderPresetPageMode::Edit,
+            field_selected: 0,
+            editing: false,
+            picker: None,
+        });
+
+        let request = app.selected_provider_preset_validation_request().unwrap();
+
+        assert_eq!(request.profile_id, "provider1");
+        assert_eq!(request.provider, "anthropic");
+        assert_eq!(request.api_key, "sk-test");
+        assert_eq!(request.base_url, "https://example.com/v1");
+        assert_eq!(request.user_agent, "drugclaw-test/1.0");
+        assert_eq!(request.model, "claude-sonnet-4-5-20250929");
+        assert_eq!(request.codex_account_id, None);
+    }
+
+    #[test]
+    fn test_clear_selected_provider_preset_field_clears_without_edit_mode() {
+        let mut app = SetupApp::new();
+        app.provider_preset_page = Some(ProviderPresetPage {
+            entries: vec![ProviderPresetDraft {
+                id: "provider1".into(),
+                provider: "google".into(),
+                api_key: "secret".into(),
+                base_url: "https://example.com/v1".into(),
+                user_agent: "ua".into(),
+                default_model: "gemini-2.5-pro".into(),
+                show_thinking: false,
+            }],
+            selected: 0,
+            mode: ProviderPresetPageMode::Edit,
+            field_selected: 2,
+            editing: false,
+            picker: None,
+        });
+
+        app.clear_selected_provider_preset_field();
+
+        let page = app.provider_preset_page.as_ref().unwrap();
+        assert_eq!(page.entries[0].api_key, "");
+    }
+
+    #[test]
+    fn test_restore_selected_provider_preset_field_default_restores_provider_base_url() {
+        let mut app = SetupApp::new();
+        app.provider_preset_page = Some(ProviderPresetPage {
+            entries: vec![ProviderPresetDraft {
+                id: "provider1".into(),
+                provider: "openai".into(),
+                api_key: String::new(),
+                base_url: "https://integrate.api.nvidia.com/v1".into(),
+                user_agent: String::new(),
+                default_model: "meta/llama-3.3-70b-instruct".into(),
+                show_thinking: false,
+            }],
+            selected: 0,
+            mode: ProviderPresetPageMode::Edit,
+            field_selected: 3,
+            editing: false,
+            picker: None,
+        });
+
+        let restored = app
+            .restore_selected_provider_preset_field_default()
+            .unwrap();
+
+        assert_eq!(restored, "https://api.openai.com/v1");
+        let page = app.provider_preset_page.as_ref().unwrap();
+        assert_eq!(page.entries[0].base_url, "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn test_switching_provider_updates_default_base_url_and_model_when_still_on_old_defaults() {
+        let mut app = SetupApp::new();
+        app.provider_preset_page = Some(ProviderPresetPage {
+            entries: vec![ProviderPresetDraft {
+                id: "provider1".into(),
+                provider: "nvidia".into(),
+                api_key: String::new(),
+                base_url: "https://integrate.api.nvidia.com/v1".into(),
+                user_agent: String::new(),
+                default_model: "meta/llama-3.3-70b-instruct".into(),
+                show_thinking: false,
+            }],
+            selected: 0,
+            mode: ProviderPresetPageMode::Edit,
+            field_selected: 1,
+            editing: false,
+            picker: Some(LlmOverridePicker {
+                title: "Select Provider".into(),
+                target_key: "provider".into(),
+                options: vec![("openai".into(), "openai".into())],
+                selected: 0,
+            }),
+        });
+
+        app.apply_provider_preset_picker_selection();
+
+        let page = app.provider_preset_page.as_ref().unwrap();
+        assert_eq!(page.entries[0].provider, "openai");
+        assert_eq!(page.entries[0].base_url, "https://api.openai.com/v1");
+        assert_eq!(page.entries[0].default_model, "gpt-5.2");
+    }
+
+    #[test]
+    fn test_provider_presets_field_comes_after_show_thinking_in_model_section() {
+        let app = SetupApp::new();
+        let show_idx = app
+            .fields
+            .iter()
+            .position(|f| f.key == "SHOW_THINKING")
+            .unwrap();
+        let presets_idx = app
+            .fields
+            .iter()
+            .position(|f| f.key == llm_provider_profiles_key())
+            .unwrap();
+        assert!(presets_idx > show_idx);
+    }
+
+    #[test]
+    fn test_provider_preset_references_collect_channel_and_dynamic_slots() {
+        let mut app = SetupApp::new();
+        app.set_field_value(telegram_llm_provider_key(), "1".into());
+        app.set_field_value(&telegram_slot_id_key(2), "bot2".into());
+        app.set_field_value(&telegram_slot_model_key(2), "1".into());
+        app.set_field_value(&dynamic_slot_llm_provider_key("slack", 1), "1".into());
+        app.set_field_value(&dynamic_slot_id_field_key("slack", 1), "sales".into());
+
+        let refs = app.provider_preset_references("1");
+        assert!(refs.iter().any(|v| v == "telegram channel"));
+        assert!(refs.iter().any(|v| v == "telegram.bot2"));
+        assert!(refs.iter().any(|v| v == "slack.sales"));
+    }
+
+    #[test]
+    fn test_renaming_provider_preset_updates_references() {
+        let mut app = SetupApp::new();
+        app.set_field_value(telegram_llm_provider_key(), "1".into());
+        app.set_field_value(&telegram_slot_id_key(2), "bot2".into());
+        app.set_field_value(&telegram_slot_model_key(2), "1".into());
+        app.set_field_value(&dynamic_slot_llm_provider_key("slack", 1), "1".into());
+        app.set_field_value(&dynamic_slot_id_field_key("slack", 1), "sales".into());
+        app.provider_preset_page = Some(ProviderPresetPage {
+            entries: vec![ProviderPresetDraft {
+                id: "1".into(),
+                provider: "openai".into(),
+                api_key: String::new(),
+                base_url: String::new(),
+                user_agent: String::new(),
+                default_model: "gpt-5.2".into(),
+                show_thinking: false,
+            }],
+            selected: 0,
+            mode: ProviderPresetPageMode::Edit,
+            field_selected: 0,
+            editing: true,
+            picker: None,
+        });
+
+        app.set_provider_preset_selected_field_value("2".into());
+
+        assert_eq!(app.field_value(telegram_llm_provider_key()), "2");
+        assert_eq!(app.field_value(&telegram_slot_model_key(2)), "2");
+        assert_eq!(
+            app.field_value(&dynamic_slot_llm_provider_key("slack", 1)),
+            "2"
+        );
+        let refs = app.provider_preset_references("2");
+        assert!(refs.iter().any(|v| v == "telegram channel"));
+        assert!(refs.iter().any(|v| v == "telegram.bot2"));
+        assert!(refs.iter().any(|v| v == "slack.sales"));
+    }
+
+    #[test]
+    fn test_delete_selected_provider_preset_blocks_when_referenced() {
+        let mut app = SetupApp::new();
+        app.set_field_value(telegram_llm_provider_key(), "1".into());
+        app.provider_preset_page = Some(ProviderPresetPage {
+            entries: vec![ProviderPresetDraft {
+                id: "1".into(),
+                provider: "openai".into(),
+                api_key: String::new(),
+                base_url: String::new(),
+                user_agent: String::new(),
+                default_model: "gpt-5.2".into(),
+                show_thinking: false,
+            }],
+            selected: 0,
+            mode: ProviderPresetPageMode::List,
+            field_selected: 0,
+            editing: false,
+            picker: None,
+        });
+
+        let err = app.delete_selected_provider_preset(false).unwrap_err();
+        assert!(err.to_string().contains("still referenced"));
+        assert_eq!(app.field_value(telegram_llm_provider_key()), "1");
+        assert_eq!(
+            app.provider_preset_page
+                .as_ref()
+                .map(|page| page.entries.len())
+                .unwrap_or_default(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_delete_selected_provider_preset_can_reset_refs_to_main() {
+        let mut app = SetupApp::new();
+        app.set_field_value(telegram_llm_provider_key(), "1".into());
+        app.set_field_value(&dynamic_slot_llm_provider_key("slack", 1), "1".into());
+        app.provider_preset_page = Some(ProviderPresetPage {
+            entries: vec![ProviderPresetDraft {
+                id: "1".into(),
+                provider: "openai".into(),
+                api_key: String::new(),
+                base_url: String::new(),
+                user_agent: String::new(),
+                default_model: "gpt-5.2".into(),
+                show_thinking: false,
+            }],
+            selected: 0,
+            mode: ProviderPresetPageMode::List,
+            field_selected: 0,
+            editing: false,
+            picker: None,
+        });
+
+        let updated_refs = app.delete_selected_provider_preset(true).unwrap();
+        assert_eq!(
+            updated_refs,
+            vec!["slack.main".to_string(), "telegram channel".to_string()]
+        );
+        assert_eq!(app.field_value(telegram_llm_provider_key()), "");
+        assert_eq!(
+            app.field_value(&dynamic_slot_llm_provider_key("slack", 1)),
+            ""
+        );
+        assert_eq!(
+            app.provider_preset_page
+                .as_ref()
+                .map(|page| page.entries.len())
+                .unwrap_or_default(),
+            0
+        );
+    }
+
+    #[test]
+    fn test_key_display_hides_json_suffix_for_provider_presets() {
+        assert_eq!(
+            SetupApp::key_display(llm_provider_profiles_key()),
+            "LLM_PROVIDER_PROFILES"
+        );
+    }
+
+    #[test]
     fn test_save_config_yaml_respects_high_risk_confirmation_toggle() {
         let yaml_path = std::env::temp_dir().join(format!(
             "drugclaw_setup_high_risk_confirm_test_{}.yaml",
@@ -6254,6 +8974,88 @@ channels:
         save_config_yaml(&yaml_path, &values).unwrap();
         let s = fs::read_to_string(&yaml_path).unwrap();
         assert!(s.contains("high_risk_tool_user_confirmation_required: false\n"));
+
+        let _ = fs::remove_file(&yaml_path);
+    }
+
+    #[test]
+    fn test_save_config_yaml_writes_a2a_section() {
+        let yaml_path = std::env::temp_dir().join(format!(
+            "drugclaw_setup_a2a_test_{}.yaml",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+
+        let mut values = HashMap::new();
+        values.insert("ENABLED_CHANNELS".into(), "web".into());
+        values.insert("LLM_PROVIDER".into(), "anthropic".into());
+        values.insert("LLM_API_KEY".into(), "key".into());
+        values.insert(a2a_enabled_key().into(), "true".into());
+        values.insert(
+            a2a_public_base_url_key().into(),
+            "https://planner.example.com".into(),
+        );
+        values.insert(a2a_agent_name_key().into(), "Planner".into());
+        values.insert(a2a_agent_description_key().into(), "Routes work".into());
+        values.insert(a2a_shared_tokens_key().into(), "shared-a2a-token".into());
+        values.insert(
+            a2a_peers_json_key().into(),
+            r#"{"worker":{"enabled":true,"base_url":"https://worker.example.com","default_session_key":"a2a:worker"}}"#
+                .into(),
+        );
+
+        save_config_yaml(&yaml_path, &values).unwrap();
+        let s = fs::read_to_string(&yaml_path).unwrap();
+        assert!(s.contains("a2a:\n"));
+        assert!(s.contains("  enabled: true\n"));
+        assert!(s.contains("  public_base_url: \"https://planner.example.com\"\n"));
+        assert!(s.contains("  agent_name: \"Planner\"\n"));
+        assert!(s.contains("  shared_tokens:\n"));
+        assert!(s.contains("    worker:\n"));
+
+        let _ = fs::remove_file(&yaml_path);
+    }
+
+    #[test]
+    fn test_save_config_yaml_writes_subagents_section() {
+        let yaml_path = std::env::temp_dir().join(format!(
+            "drugclaw_setup_subagents_test_{}.yaml",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+
+        let mut values = HashMap::new();
+        values.insert("ENABLED_CHANNELS".into(), "web".into());
+        values.insert("LLM_PROVIDER".into(), "anthropic".into());
+        values.insert("LLM_API_KEY".into(), "key".into());
+        values.insert(subagents_max_concurrent_key().into(), "8".into());
+        values.insert(subagents_max_active_per_chat_key().into(), "9".into());
+        values.insert(subagents_run_timeout_secs_key().into(), "1800".into());
+        values.insert(subagents_announce_to_chat_key().into(), "false".into());
+        values.insert(subagents_max_spawn_depth_key().into(), "2".into());
+        values.insert(subagents_max_children_per_run_key().into(), "7".into());
+        values.insert(
+            subagents_thread_bound_routing_enabled_key().into(),
+            "false".into(),
+        );
+        values.insert(
+            subagents_announce_relay_interval_secs_key().into(),
+            "30".into(),
+        );
+        values.insert(subagents_max_tokens_per_run_key().into(), "240000".into());
+        values.insert(subagents_orchestrate_max_workers_key().into(), "6".into());
+
+        save_config_yaml(&yaml_path, &values).unwrap();
+        let s = fs::read_to_string(&yaml_path).unwrap();
+        assert!(s.contains("subagents:\n"));
+        assert!(s.contains("  max_concurrent: 8\n"));
+        assert!(s.contains("  max_active_per_chat: 9\n"));
+        assert!(s.contains("  run_timeout_secs: 1800\n"));
+        assert!(s.contains("  announce_to_chat: false\n"));
+        assert!(s.contains("  max_spawn_depth: 2\n"));
+        assert!(s.contains("  max_children_per_run: 7\n"));
+        assert!(s.contains("  thread_bound_routing_enabled: false\n"));
+        assert!(s.contains("  announce_relay_interval_secs: 30\n"));
+        assert!(s.contains("  max_tokens_per_run: 240000\n"));
+        assert!(s.contains("  orchestrate_max_workers: 6\n"));
 
         let _ = fs::remove_file(&yaml_path);
     }
@@ -6420,14 +9222,13 @@ sandbox:
 "#,
         )
         .unwrap();
-        std::env::set_var("MICROCLAW_CONFIG", &path);
+        std::env::set_var("DRUGCLAW_CONFIG", &path);
         let out = enable_sandbox_in_config().unwrap();
         assert!(out.contains(path.to_string_lossy().as_ref()));
         let cfg = Config::load().unwrap();
         assert!(matches!(cfg.sandbox.mode, SandboxMode::All));
-        assert!(!cfg.sandbox.no_network);
         assert!(cfg.sandbox.require_runtime);
-        std::env::remove_var("MICROCLAW_CONFIG");
+        std::env::remove_var("DRUGCLAW_CONFIG");
         let _ = std::fs::remove_file(path);
     }
     #[test]
@@ -7283,5 +10084,7 @@ sandbox:
         assert!(find_provider_preset("synthetic").is_some());
         assert!(find_provider_preset("chutes").is_some());
         assert!(find_provider_preset("qwen-portal").is_some());
+        assert!(find_provider_preset("aliyun-bailian").is_some());
+        assert!(find_provider_preset("nvidia").is_some());
     }
 }

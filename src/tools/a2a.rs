@@ -230,7 +230,6 @@ mod tests {
     use super::*;
     use axum::{extract::State, routing::post, Json, Router};
     use serde_json::Value;
-    use tokio::net::TcpListener;
 
     #[tokio::test]
     async fn test_a2a_list_peers_returns_enabled_peers() {
@@ -277,12 +276,11 @@ mod tests {
         }
 
         let Some(std_listener) = crate::test_support::bind_test_listener() else {
-            eprintln!("skipping test_a2a_send_posts_to_peer: loopback bind unavailable");
             return;
         };
-        let addr = std_listener.local_addr().unwrap();
         std_listener.set_nonblocking(true).unwrap();
-        let listener = TcpListener::from_std(std_listener).unwrap();
+        let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
+        let addr = listener.local_addr().unwrap();
         let app = Router::new()
             .route(A2A_MESSAGE_PATH, post(handler))
             .with_state("secret".to_string());
@@ -297,7 +295,7 @@ mod tests {
             "worker".into(),
             crate::config::A2APeerConfig {
                 enabled: true,
-                base_url: format!("http://{addr}"),
+                base_url: format!("http://{}", addr),
                 bearer_token: Some("secret".into()),
                 description: None,
                 default_session_key: None,

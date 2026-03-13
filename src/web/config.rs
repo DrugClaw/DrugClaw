@@ -65,14 +65,24 @@ fn merge_yaml_value(
     incoming: &serde_yaml::Value,
     parent_key: Option<&str>,
 ) {
-    if parent_key.is_some_and(is_sensitive_config_key)
-        && incoming
+    if parent_key.is_some_and(is_sensitive_config_key) {
+        let keep_existing = incoming
             .as_str()
             .map(|s| s.trim() == "***")
             .unwrap_or(false)
-    {
-        // Frontend redacts secrets in /api/config as "***"; keep existing value when unchanged.
-        return;
+            || incoming
+                .as_sequence()
+                .map(|items| {
+                    !items.is_empty()
+                        && items
+                            .iter()
+                            .all(|item| item.as_str().map(|s| s.trim() == "***").unwrap_or(false))
+                })
+                .unwrap_or(false);
+        if keep_existing {
+            // Frontend redacts secrets in /api/config as "***"; keep existing value when unchanged.
+            return;
+        }
     }
 
     match incoming {
@@ -187,6 +197,7 @@ pub(super) async fn api_config_self_check(
             "has_entries": has_entries
         })
     });
+    let memory_backend_health = state.app_state.memory_backend.provider_health_snapshot();
 
     if !has_password {
         warnings.push(ConfigWarning {
@@ -351,6 +362,46 @@ pub(super) async fn api_config_self_check(
             message: "Reflector is enabled but recorded 0 runs in the last 24h.".to_string(),
         });
     }
+    if memory_backend_health.external_provider_enabled
+        && memory_backend_health.startup_probe_ok == Some(false)
+    {
+        warnings.push(ConfigWarning {
+            code: "memory_provider_startup_probe_failed",
+            severity: "high",
+            message: format!(
+                "External memory provider startup probe failed{}",
+                memory_backend_health
+                    .startup_probe_message
+                    .as_deref()
+                    .map(|m| format!(": {m}"))
+                    .unwrap_or_default()
+            ),
+        });
+    }
+    if memory_backend_health.consecutive_primary_failures >= 3 {
+        warnings.push(ConfigWarning {
+            code: "memory_provider_primary_failures_high",
+            severity: "high",
+            message: format!(
+                "External memory provider has {} consecutive primary failures; SQLite fallback is active.",
+                memory_backend_health.consecutive_primary_failures
+            ),
+        });
+    }
+    if memory_backend_health.total_fallbacks >= 5 {
+        warnings.push(ConfigWarning {
+            code: "memory_provider_fallbacks_detected",
+            severity: "medium",
+            message: format!(
+                "External memory provider has fallen back to SQLite {} times. Last reason: {}",
+                memory_backend_health.total_fallbacks,
+                memory_backend_health
+                    .last_fallback_reason
+                    .as_deref()
+                    .unwrap_or("unknown")
+            ),
+        });
+    }
 
     if let Some(hooks) = state
         .app_state
@@ -504,6 +555,12 @@ pub(super) async fn api_update_config(
     }
     if let Some(v) = body.llm_base_url {
         cfg.llm_base_url = v;
+    }
+    if let Some(v) = body.llm_user_agent {
+        cfg.llm_user_agent = v.unwrap_or_default();
+    }
+    if let Some(v) = body.provider_presets {
+        cfg.provider_presets = v;
     }
     if let Some(v) = body.max_tokens {
         cfg.max_tokens = v;

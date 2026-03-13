@@ -7,12 +7,13 @@ members = [
     "crates/drugclaw-tools",
     "crates/drugclaw-channels",
     "crates/drugclaw-app",
+    "crates/drugclaw-observability",
 ]
 resolver = "2"
 
 [package]
 name = "drugclaw"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 license = "Apache-2.0"
 default-run = "drugclaw"
@@ -29,6 +30,7 @@ drugclaw-storage = { path = "crates/drugclaw-storage" }
 drugclaw-tools = { path = "crates/drugclaw-tools" }
 drugclaw-channels = { path = "crates/drugclaw-channels" }
 drugclaw-app = { path = "crates/drugclaw-app" }
+drugclaw-observability = { path = "crates/drugclaw-observability" }
 teloxide = { version = "0.17", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tokio-native-tls = "0.3"
@@ -44,6 +46,7 @@ regex = "1"
 thiserror = "2"
 anyhow = "1"
 async-trait = "0.1"
+agent-client-protocol = "0.10.0"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde_yaml = "0.9"
@@ -54,16 +57,18 @@ chrono-tz = "0.10"
 iana-time-zone = "0.1"
 zip = "2"
 sha2 = "0.10"
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
 crossterm = "0.28"
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "cache", "rustls_backend"] }
 include_dir = "0.7"
 async-stream = "0.3"
 futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["compat"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 argon2 = "0.5"
 opentelemetry-proto = { version = "0.28", features = ["gen-tonic-messages"] }
+opentelemetry-semantic-conventions = { version = "0.30", features = ["semconv_experimental"] }
 prost = "0.13"
 matrix-sdk = { version = "0.16.0", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "native-tls", "sqlite", "bundled-sqlite"] }
 clap = { version = "4.5", features = ["derive"] }
@@ -74,8 +79,6 @@ rmcp = { version = "1.1", features = [
     "transport-streamable-http-client-reqwest",
 ] }
 shellexpand = "3.1.2"
-agent-client-protocol = "0.10.0"
-tokio-util = { version = "0.7", features = ["compat"] }
 
 [dev-dependencies]
 tower = "0.5"

@@ -10,6 +10,7 @@ fn minimal_config() -> Config {
         llm_provider: "anthropic".into(),
         api_key: "test-key".into(),
         model: String::new(),
+        provider_presets: std::collections::HashMap::new(),
         llm_providers: std::collections::HashMap::new(),
         llm_base_url: None,
         llm_user_agent: drugclaw::http_client::default_llm_user_agent(),
@@ -70,6 +71,7 @@ fn minimal_config() -> Config {
         plugins: drugclaw::plugins::PluginsConfig::default(),
         voice_provider: "openai".into(),
         voice_transcription_command: None,
+        observability: None,
         channels: std::collections::HashMap::new(),
     }
 }

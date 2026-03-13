@@ -252,30 +252,6 @@ pub struct AnthropicProvider {
     base_url: String,
 }
 
-const LLM_MAX_RETRIES: u32 = 5;
-
-fn llm_retry_delay(retry: u32) -> std::time::Duration {
-    std::time::Duration::from_secs(2u64.pow(retry))
-}
-
-fn should_retry_llm_status(status: reqwest::StatusCode) -> bool {
-    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
-}
-
-fn should_retry_llm_request_error(err: &reqwest::Error) -> bool {
-    err.is_timeout() || err.is_connect() || err.is_request() || err.is_body()
-}
-
-fn anthropic_error_from_status(status: reqwest::StatusCode, body: &str) -> DrugClawError {
-    if let Ok(api_err) = serde_json::from_str::<AnthropicApiError>(body) {
-        return DrugClawError::LlmApi(format!(
-            "{}: {}",
-            api_err.error.error_type, api_err.error.message
-        ));
-    }
-    DrugClawError::LlmApi(format!("HTTP {status}: {body}"))
-}
-
 impl AnthropicProvider {
     pub fn new(config: &Config) -> Self {
         AnthropicProvider {
@@ -303,59 +279,27 @@ impl AnthropicProvider {
             "Sending LLM stream request"
         );
 
-        let mut retries = 0u32;
-        let response = loop {
-            let response = match self
-                .http
-                .post(&self.base_url)
-                .header("x-api-key", &self.api_key)
-                .header("anthropic-version", "2023-06-01")
-                .header("content-type", "application/json")
-                .json(&streamed_request)
-                .send()
-                .await
-            {
-                Ok(response) => response,
-                Err(err) if retries < LLM_MAX_RETRIES && should_retry_llm_request_error(&err) => {
-                    retries += 1;
-                    let delay = llm_retry_delay(retries);
-                    warn!(
-                        provider = "anthropic",
-                        model = %request.model,
-                        url = %self.base_url,
-                        error = %err,
-                        "Anthropic stream request failed before response, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
-                        delay
-                    );
-                    tokio::time::sleep(delay).await;
-                    continue;
-                }
-                Err(err) => return Err(err.into()),
-            };
+        let response = self
+            .http
+            .post(&self.base_url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&streamed_request)
+            .send()
+            .await?;
 
-            let status = response.status();
-            if status.is_success() {
-                break response;
-            }
-
+        let status = response.status();
+        if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            if retries < LLM_MAX_RETRIES && should_retry_llm_status(status) {
-                retries += 1;
-                let delay = llm_retry_delay(retries);
-                warn!(
-                    provider = "anthropic",
-                    model = %request.model,
-                    url = %self.base_url,
-                    status = %status,
-                    "Anthropic stream request failed with retryable status, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
-                    delay
-                );
-                tokio::time::sleep(delay).await;
-                continue;
+            if let Ok(api_err) = serde_json::from_str::<AnthropicApiError>(&body) {
+                return Err(DrugClawError::LlmApi(format!(
+                    "{}: {}",
+                    api_err.error.error_type, api_err.error.message
+                )));
             }
-
-            return Err(anthropic_error_from_status(status, &body));
-        };
+            return Err(DrugClawError::LlmApi(format!("HTTP {status}: {body}")));
+        }
 
         let mut byte_stream = response.bytes_stream();
         let mut sse = SseEventParser::default();
@@ -432,16 +376,27 @@ struct StreamToolUseBlock {
 }
 
 fn usage_from_json(v: &serde_json::Value) -> Option<Usage> {
-    let input = v.get("input_tokens").and_then(|n| n.as_u64())?;
+    let input = v
+        .get("input_tokens")
+        .and_then(json_u64)
+        .or_else(|| v.get("prompt_tokens").and_then(json_u64))?;
     let output = v
         .get("output_tokens")
-        .and_then(|n| n.as_u64())
-        .or_else(|| v.get("completion_tokens").and_then(|n| n.as_u64()))
+        .and_then(json_u64)
+        .or_else(|| v.get("completion_tokens").and_then(json_u64))
         .unwrap_or(0);
     Some(Usage {
         input_tokens: u32::try_from(input).unwrap_or(u32::MAX),
         output_tokens: u32::try_from(output).unwrap_or(u32::MAX),
     })
+}
+
+fn json_u64(v: &serde_json::Value) -> Option<u64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_u64(),
+        serde_json::Value::String(s) => s.parse::<u64>().ok(),
+        _ => None,
+    }
 }
 
 fn process_anthropic_stream_event(
@@ -586,8 +541,12 @@ fn process_openai_stream_event(
         return;
     };
 
-    if usage.is_none() {
-        *usage = v.get("usage").and_then(usage_from_json);
+    if let Some(parsed_usage) = v.get("usage").and_then(usage_from_json).or_else(|| {
+        v.get("response")
+            .and_then(|r| r.get("usage"))
+            .and_then(usage_from_json)
+    }) {
+        merge_usage_max(usage, parsed_usage);
     }
 
     let Some(choice) = v
@@ -670,7 +629,7 @@ fn process_openai_stream_event(
                         other => entry.input_json.push_str(&other.to_string()),
                     }
                 }
-                if let Some(sig) = function.get("thought_signature").and_then(|v| v.as_str()) {
+                if let Some(sig) = function.get("thought_signature").and_then(|s| s.as_str()) {
                     entry.thought_signature = Some(sig.to_string());
                 }
             }
@@ -682,6 +641,20 @@ fn process_openai_stream_event(
             {
                 entry.thought_signature = Some(sig.to_string());
             }
+        }
+    }
+}
+
+// OpenAI-compatible streaming usage is cumulative (running total), not per-chunk delta.
+// We therefore keep the max seen values instead of summing to avoid double counting.
+fn merge_usage_max(slot: &mut Option<Usage>, incoming: Usage) {
+    match slot {
+        Some(current) => {
+            current.input_tokens = current.input_tokens.max(incoming.input_tokens);
+            current.output_tokens = current.output_tokens.max(incoming.output_tokens);
+        }
+        None => {
+            *slot = Some(incoming);
         }
     }
 }
@@ -814,9 +787,10 @@ impl LlmProvider for AnthropicProvider {
         };
 
         let mut retries = 0u32;
+        let max_retries = 3;
 
         loop {
-            let response = match self
+            let response = self
                 .http
                 .post(&self.base_url)
                 .header("x-api-key", &self.api_key)
@@ -824,64 +798,23 @@ impl LlmProvider for AnthropicProvider {
                 .header("content-type", "application/json")
                 .json(&request)
                 .send()
-                .await
-            {
-                Ok(response) => response,
-                Err(err) if retries < LLM_MAX_RETRIES && should_retry_llm_request_error(&err) => {
-                    retries += 1;
-                    let delay = llm_retry_delay(retries);
-                    warn!(
-                        provider = "anthropic",
-                        model = %request.model,
-                        url = %self.base_url,
-                        error = %err,
-                        "Anthropic request failed before response, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
-                        delay
-                    );
-                    tokio::time::sleep(delay).await;
-                    continue;
-                }
-                Err(err) => return Err(err.into()),
-            };
+                .await?;
 
             let status = response.status();
 
             if status.is_success() {
-                let body = match response.text().await {
-                    Ok(body) => body,
-                    Err(err)
-                        if retries < LLM_MAX_RETRIES && should_retry_llm_request_error(&err) =>
-                    {
-                        retries += 1;
-                        let delay = llm_retry_delay(retries);
-                        warn!(
-                            provider = "anthropic",
-                            model = %request.model,
-                            url = %self.base_url,
-                            error = %err,
-                            "Anthropic response body read failed, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
-                            delay
-                        );
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-                    Err(err) => return Err(err.into()),
-                };
+                let body = response.text().await?;
                 let parsed: MessagesResponse = serde_json::from_str(&body).map_err(|e| {
                     DrugClawError::LlmApi(format!("Failed to parse response: {e}\nBody: {body}"))
                 })?;
                 return Ok(parsed);
             }
 
-            if retries < LLM_MAX_RETRIES && should_retry_llm_status(status) {
+            if status.as_u16() == 429 && retries < max_retries {
                 retries += 1;
-                let delay = llm_retry_delay(retries);
+                let delay = std::time::Duration::from_secs(2u64.pow(retries));
                 warn!(
-                    provider = "anthropic",
-                    model = %request.model,
-                    url = %self.base_url,
-                    status = %status,
-                    "Anthropic request hit retryable status, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
+                    "Rate limited, retrying in {:?} (attempt {retries}/{max_retries})",
                     delay
                 );
                 tokio::time::sleep(delay).await;
@@ -889,7 +822,13 @@ impl LlmProvider for AnthropicProvider {
             }
 
             let body = response.text().await.unwrap_or_default();
-            return Err(anthropic_error_from_status(status, &body));
+            if let Ok(api_err) = serde_json::from_str::<AnthropicApiError>(&body) {
+                return Err(DrugClawError::LlmApi(format!(
+                    "{}: {}",
+                    api_err.error.error_type, api_err.error.message
+                )));
+            }
+            return Err(DrugClawError::LlmApi(format!("HTTP {status}: {body}")));
         }
     }
 
@@ -1253,6 +1192,16 @@ fn should_retry_with_max_completion_tokens(error_text: &str) -> bool {
     lower.contains("max_tokens") && lower.contains("max_completion_tokens")
 }
 
+fn should_retry_without_stream_options(error_text: &str) -> bool {
+    let lower = error_text.to_ascii_lowercase();
+    (lower.contains("stream_options") || lower.contains("include_usage"))
+        && (lower.contains("unsupported")
+            || lower.contains("unknown")
+            || lower.contains("invalid")
+            || lower.contains("not supported")
+            || lower.contains("unrecognized"))
+}
+
 fn switch_to_max_completion_tokens(body: &mut serde_json::Value) -> bool {
     if body.get("max_completion_tokens").is_some() {
         return false;
@@ -1390,6 +1339,7 @@ impl LlmProvider for OpenAiProvider {
         }
 
         let mut retries = 0u32;
+        let max_retries = 3;
 
         loop {
             let mut req = self
@@ -1400,48 +1350,12 @@ impl LlmProvider for OpenAiProvider {
             if !self.api_key.trim().is_empty() {
                 req = req.header("Authorization", format!("Bearer {}", self.api_key));
             }
-            let response = match req.send().await {
-                Ok(response) => response,
-                Err(err) if retries < LLM_MAX_RETRIES && should_retry_llm_request_error(&err) => {
-                    retries += 1;
-                    let delay = llm_retry_delay(retries);
-                    warn!(
-                        provider = %self.provider,
-                        model = %model,
-                        url = %self.chat_url,
-                        error = %err,
-                        "OpenAI-compatible request failed before response, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
-                        delay
-                    );
-                    tokio::time::sleep(delay).await;
-                    continue;
-                }
-                Err(err) => return Err(err.into()),
-            };
+            let response = req.send().await?;
 
             let status = response.status();
 
             if status.is_success() {
-                let text = match response.text().await {
-                    Ok(text) => text,
-                    Err(err)
-                        if retries < LLM_MAX_RETRIES && should_retry_llm_request_error(&err) =>
-                    {
-                        retries += 1;
-                        let delay = llm_retry_delay(retries);
-                        warn!(
-                            provider = %self.provider,
-                            model = %model,
-                            url = %self.chat_url,
-                            error = %err,
-                            "OpenAI-compatible response body read failed, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
-                            delay
-                        );
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-                    Err(err) => return Err(err.into()),
-                };
+                let text = response.text().await?;
                 let oai: OaiResponse = serde_json::from_str(&text).map_err(|e| {
                     DrugClawError::LlmApi(format!(
                         "Failed to parse OpenAI response: {e}\nBody: {text}"
@@ -1450,15 +1364,11 @@ impl LlmProvider for OpenAiProvider {
                 return Ok(translate_oai_response(oai));
             }
 
-            if retries < LLM_MAX_RETRIES && should_retry_llm_status(status) {
+            if status.as_u16() == 429 && retries < max_retries {
                 retries += 1;
-                let delay = llm_retry_delay(retries);
+                let delay = std::time::Duration::from_secs(2u64.pow(retries));
                 warn!(
-                    provider = %self.provider,
-                    model = %model,
-                    url = %self.chat_url,
-                    status = %status,
-                    "OpenAI-compatible request hit retryable status, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
+                    "Rate limited, retrying in {:?} (attempt {retries}/{max_retries})",
                     delay
                 );
                 tokio::time::sleep(delay).await;
@@ -1553,6 +1463,17 @@ impl LlmProvider for OpenAiProvider {
             &self.openai_compat_body_overrides_by_model,
         );
         body["stream"] = json!(true);
+        if body.get("stream_options").is_none() {
+            body["stream_options"] = json!({
+                "include_usage": true
+            });
+        } else if let Some(obj) = body
+            .get_mut("stream_options")
+            .and_then(|v| v.as_object_mut())
+        {
+            obj.entry("include_usage".to_string())
+                .or_insert_with(|| json!(true));
+        }
 
         if let Some(ref tool_defs) = tools {
             if !tool_defs.is_empty() {
@@ -1568,7 +1489,6 @@ impl LlmProvider for OpenAiProvider {
             "Sending LLM stream request"
         );
 
-        let mut retries = 0u32;
         let response = loop {
             let mut req = self
                 .http
@@ -1578,49 +1498,27 @@ impl LlmProvider for OpenAiProvider {
             if !self.api_key.trim().is_empty() {
                 req = req.header("Authorization", format!("Bearer {}", self.api_key));
             }
-            let response = match req.send().await {
-                Ok(response) => response,
-                Err(err) if retries < LLM_MAX_RETRIES && should_retry_llm_request_error(&err) => {
-                    retries += 1;
-                    let delay = llm_retry_delay(retries);
-                    warn!(
-                        provider = %self.provider,
-                        model = %model,
-                        url = %self.chat_url,
-                        error = %err,
-                        "OpenAI-compatible stream request failed before response, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
-                        delay
-                    );
-                    tokio::time::sleep(delay).await;
-                    continue;
-                }
-                Err(err) => return Err(err.into()),
-            };
+            let response = req.send().await?;
             let status = response.status();
             if status.is_success() {
                 break response;
             }
 
             let text = response.text().await.unwrap_or_default();
-            if retries < LLM_MAX_RETRIES && should_retry_llm_status(status) {
-                retries += 1;
-                let delay = llm_retry_delay(retries);
-                warn!(
-                    provider = %self.provider,
-                    model = %model,
-                    url = %self.chat_url,
-                    status = %status,
-                    "OpenAI-compatible stream request hit retryable status, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
-                    delay
-                );
-                tokio::time::sleep(delay).await;
-                continue;
-            }
             if should_retry_with_max_completion_tokens(&text)
                 && switch_to_max_completion_tokens(&mut body)
             {
                 warn!(
                     "OpenAI-compatible API rejected max_tokens; retrying stream with max_completion_tokens"
+                );
+                continue;
+            }
+            if body.get("stream_options").is_some() && should_retry_without_stream_options(&text) {
+                if let Some(obj) = body.as_object_mut() {
+                    obj.remove("stream_options");
+                }
+                warn!(
+                    "OpenAI-compatible API rejected stream_options/include_usage; retrying stream without stream_options"
                 );
                 continue;
             }
@@ -1753,6 +1651,7 @@ impl OpenAiProvider {
         }
 
         let mut retries = 0u32;
+        let max_retries = 3;
 
         loop {
             let mut req = self
@@ -1768,60 +1667,20 @@ impl OpenAiProvider {
                     req = req.header("ChatGPT-Account-ID", account_id);
                 }
             }
-            let response = match req.send().await {
-                Ok(response) => response,
-                Err(err) if retries < LLM_MAX_RETRIES && should_retry_llm_request_error(&err) => {
-                    retries += 1;
-                    let delay = llm_retry_delay(retries);
-                    warn!(
-                        provider = %self.provider,
-                        model = %model,
-                        url = %self.responses_url,
-                        error = %err,
-                        "OpenAI-compatible responses request failed before response, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
-                        delay
-                    );
-                    tokio::time::sleep(delay).await;
-                    continue;
-                }
-                Err(err) => return Err(err.into()),
-            };
+            let response = req.send().await?;
             let status = response.status();
 
             if status.is_success() {
-                let text = match response.text().await {
-                    Ok(text) => text,
-                    Err(err)
-                        if retries < LLM_MAX_RETRIES && should_retry_llm_request_error(&err) =>
-                    {
-                        retries += 1;
-                        let delay = llm_retry_delay(retries);
-                        warn!(
-                            provider = %self.provider,
-                            model = %model,
-                            url = %self.responses_url,
-                            error = %err,
-                            "OpenAI-compatible responses body read failed, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
-                            delay
-                        );
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-                    Err(err) => return Err(err.into()),
-                };
+                let text = response.text().await?;
                 let parsed = parse_openai_codex_response_payload(&text)?;
                 return Ok(translate_oai_responses_response(parsed));
             }
 
-            if retries < LLM_MAX_RETRIES && should_retry_llm_status(status) {
+            if status.as_u16() == 429 && retries < max_retries {
                 retries += 1;
-                let delay = llm_retry_delay(retries);
+                let delay = std::time::Duration::from_secs(2u64.pow(retries));
                 warn!(
-                    provider = %self.provider,
-                    model = %model,
-                    url = %self.responses_url,
-                    status = %status,
-                    "OpenAI-compatible responses request hit retryable status, retrying in {:?} (attempt {retries}/{LLM_MAX_RETRIES})",
+                    "Rate limited, retrying in {:?} (attempt {retries}/{max_retries})",
                     delay
                 );
                 tokio::time::sleep(delay).await;
@@ -2459,6 +2318,19 @@ mod tests {
     }
 
     #[test]
+    fn test_translate_oai_response_tool_calls_legacy_function_thought_signature() {
+        let raw = r#"{"choices":[{"message":{"content":null,"reasoning_content":null,"tool_calls":[{"id":"call_1","function":{"name":"bash","arguments":"{\"command\":\"ls\"}","thought_signature":"sig_legacy"}}]},"finish_reason":"tool_calls"}],"usage":null}"#;
+        let oai: OaiResponse = serde_json::from_str(raw).unwrap();
+        let resp = translate_oai_response(oai);
+        match &resp.content[0] {
+            ResponseContentBlock::ToolUse {
+                thought_signature, ..
+            } => assert_eq!(thought_signature.as_deref(), Some("sig_legacy")),
+            _ => panic!("Expected ToolUse"),
+        }
+    }
+
+    #[test]
     fn test_translate_messages_assistant_tool_use_deepseek_reasoning() {
         let msgs = vec![Message {
             role: "assistant".into(),
@@ -2778,19 +2650,6 @@ mod tests {
     }
 
     #[test]
-    fn test_translate_oai_response_tool_calls_legacy_function_thought_signature() {
-        let raw = r#"{"choices":[{"message":{"content":null,"reasoning_content":null,"tool_calls":[{"id":"call_1","function":{"name":"bash","arguments":"{\"command\":\"ls\"}","thought_signature":"sig_legacy"}}]},"finish_reason":"tool_calls"}],"usage":null}"#;
-        let oai: OaiResponse = serde_json::from_str(raw).unwrap();
-        let resp = translate_oai_response(oai);
-        match &resp.content[0] {
-            ResponseContentBlock::ToolUse {
-                thought_signature, ..
-            } => assert_eq!(thought_signature.as_deref(), Some("sig_legacy")),
-            _ => panic!("Expected ToolUse"),
-        }
-    }
-
-    #[test]
     fn test_translate_oai_response_empty_choices() {
         let oai = OaiResponse {
             choices: vec![],
@@ -2964,32 +2823,6 @@ mod tests {
     }
 
     #[test]
-    fn test_process_openai_stream_event_accepts_structured_delta_content() {
-        let data = r#"{"choices":[{"delta":{"content":[{"type":"text","text":"Hello "},{"type":"text","text":"Gemini"}],"reasoning_content":[{"type":"text","text":"plan"},{"type":"text","text":" more"}]}}],"usage":null}"#;
-        let mut text = String::new();
-        let mut reasoning_text = String::new();
-        let mut stop_reason = None;
-        let mut usage = None;
-        let mut tool_calls = std::collections::BTreeMap::new();
-
-        process_openai_stream_event(
-            data,
-            None,
-            &mut text,
-            &mut reasoning_text,
-            &mut stop_reason,
-            &mut usage,
-            &mut tool_calls,
-        );
-
-        assert_eq!(text, "Hello Gemini");
-        assert_eq!(reasoning_text, "plan more");
-        assert_eq!(stop_reason, None);
-        assert!(usage.is_none());
-        assert!(tool_calls.is_empty());
-    }
-
-    #[test]
     fn test_process_openai_stream_event_collects_reasoning_content() {
         let data = r#"{"choices":[{"delta":{"reasoning_content":"think","tool_calls":[{"index":0,"id":"c1","function":{"name":"bash","arguments":"{\"command\":\"ls\"}","thought_signature":"sig_123"}}]},"finish_reason":null}],"usage":null}"#;
         let mut text = String::new();
@@ -3016,6 +2849,32 @@ mod tests {
         assert_eq!(call.name, "bash");
         assert_eq!(call.input_json, r#"{"command":"ls"}"#);
         assert_eq!(call.thought_signature.as_deref(), Some("sig_123"));
+    }
+
+    #[test]
+    fn test_process_openai_stream_event_accepts_structured_delta_content() {
+        let data = r#"{"choices":[{"delta":{"content":[{"type":"text","text":"Hello "},{"type":"text","text":"Gemini"}],"reasoning_content":[{"type":"text","text":"plan"},{"type":"text","text":" more"}]}}],"usage":null}"#;
+        let mut text = String::new();
+        let mut reasoning_text = String::new();
+        let mut stop_reason = None;
+        let mut usage = None;
+        let mut tool_calls = std::collections::BTreeMap::new();
+
+        process_openai_stream_event(
+            data,
+            None,
+            &mut text,
+            &mut reasoning_text,
+            &mut stop_reason,
+            &mut usage,
+            &mut tool_calls,
+        );
+
+        assert_eq!(text, "Hello Gemini");
+        assert_eq!(reasoning_text, "plan more");
+        assert_eq!(stop_reason, None);
+        assert!(usage.is_none());
+        assert!(tool_calls.is_empty());
     }
 
     #[test]
@@ -3073,6 +2932,64 @@ mod tests {
     }
 
     #[test]
+    fn test_process_openai_stream_event_updates_usage_with_max_values() {
+        let first = r#"{"choices":[{"delta":{"content":"a"}}],"usage":{"prompt_tokens":10,"completion_tokens":0}}"#;
+        let second = r#"{"choices":[{"delta":{"content":"b"}}],"usage":{"prompt_tokens":10,"completion_tokens":7}}"#;
+        let mut text = String::new();
+        let mut reasoning_text = String::new();
+        let mut stop_reason = None;
+        let mut usage = None;
+        let mut tool_calls = std::collections::BTreeMap::new();
+
+        process_openai_stream_event(
+            first,
+            None,
+            &mut text,
+            &mut reasoning_text,
+            &mut stop_reason,
+            &mut usage,
+            &mut tool_calls,
+        );
+        process_openai_stream_event(
+            second,
+            None,
+            &mut text,
+            &mut reasoning_text,
+            &mut stop_reason,
+            &mut usage,
+            &mut tool_calls,
+        );
+
+        let usage = usage.expect("usage should exist");
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 7);
+    }
+
+    #[test]
+    fn test_process_openai_stream_event_parses_response_done_usage() {
+        let data = r#"{"type":"response.done","response":{"usage":{"input_tokens":11,"output_tokens":5}}}"#;
+        let mut text = String::new();
+        let mut reasoning_text = String::new();
+        let mut stop_reason = None;
+        let mut usage = None;
+        let mut tool_calls = std::collections::BTreeMap::new();
+
+        process_openai_stream_event(
+            data,
+            None,
+            &mut text,
+            &mut reasoning_text,
+            &mut stop_reason,
+            &mut usage,
+            &mut tool_calls,
+        );
+
+        let usage = usage.expect("usage should exist");
+        assert_eq!(usage.input_tokens, 11);
+        assert_eq!(usage.output_tokens, 5);
+    }
+
+    #[test]
     fn test_should_retry_with_max_completion_tokens() {
         let err = r#"{"error":{"message":"Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.","param":"max_tokens"}}"#;
         assert!(should_retry_with_max_completion_tokens(err));
@@ -3088,6 +3005,28 @@ mod tests {
         assert_eq!(body.get("max_tokens"), None);
         assert_eq!(body["max_completion_tokens"], 128);
         assert!(!switch_to_max_completion_tokens(&mut body));
+    }
+
+    #[test]
+    fn test_usage_from_json_supports_openai_prompt_completion_tokens() {
+        let v = json!({
+            "prompt_tokens": 12,
+            "completion_tokens": 34
+        });
+        let usage = usage_from_json(&v).expect("usage should parse");
+        assert_eq!(usage.input_tokens, 12);
+        assert_eq!(usage.output_tokens, 34);
+    }
+
+    #[test]
+    fn test_usage_from_json_supports_numeric_strings() {
+        let v = json!({
+            "input_tokens": "56",
+            "output_tokens": "78"
+        });
+        let usage = usage_from_json(&v).expect("usage should parse");
+        assert_eq!(usage.input_tokens, 56);
+        assert_eq!(usage.output_tokens, 78);
     }
 
     #[test]
@@ -3342,14 +3281,23 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn test_openai_codex_stream_uses_responses_endpoint() {
         let _guard = env_lock();
-        let Some(listener) = crate::test_support::bind_test_listener() else {
-            eprintln!("skipping test_openai_codex_stream_uses_responses_endpoint: loopback bind unavailable");
-            return;
-        };
         let prev_access = std::env::var("OPENAI_CODEX_ACCESS_TOKEN").ok();
         let prev_codex_home = std::env::var("CODEX_HOME").ok();
         std::env::set_var("OPENAI_CODEX_ACCESS_TOKEN", "oauth-token");
 
+        let Some(listener) = crate::test_support::bind_test_listener() else {
+            if let Some(prev) = prev_access {
+                std::env::set_var("OPENAI_CODEX_ACCESS_TOKEN", prev);
+            } else {
+                std::env::remove_var("OPENAI_CODEX_ACCESS_TOKEN");
+            }
+            if let Some(prev) = prev_codex_home {
+                std::env::set_var("CODEX_HOME", prev);
+            } else {
+                std::env::remove_var("CODEX_HOME");
+            }
+            return;
+        };
         let addr = listener.local_addr().unwrap();
         let codex_home = std::env::temp_dir().join(format!(
             "drugclaw-codex-home-oauth-{}",
@@ -3459,10 +3407,6 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn test_openai_codex_stream_uses_auth_json_openai_api_key_when_oauth_missing() {
         let _guard = env_lock();
-        let Some(listener) = crate::test_support::bind_test_listener() else {
-            eprintln!("skipping test_openai_codex_stream_uses_auth_json_openai_api_key_when_oauth_missing: loopback bind unavailable");
-            return;
-        };
         let prev_access = std::env::var("OPENAI_CODEX_ACCESS_TOKEN").ok();
         let prev_codex_home = std::env::var("CODEX_HOME").ok();
         std::env::remove_var("OPENAI_CODEX_ACCESS_TOKEN");
@@ -3475,6 +3419,20 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&auth_dir).unwrap();
+        let Some(listener) = crate::test_support::bind_test_listener() else {
+            if let Some(prev) = prev_access {
+                std::env::set_var("OPENAI_CODEX_ACCESS_TOKEN", prev);
+            } else {
+                std::env::remove_var("OPENAI_CODEX_ACCESS_TOKEN");
+            }
+            if let Some(prev) = prev_codex_home {
+                std::env::set_var("CODEX_HOME", prev);
+            } else {
+                std::env::remove_var("CODEX_HOME");
+            }
+            let _ = std::fs::remove_dir_all(&auth_dir);
+            return;
+        };
         let addr = listener.local_addr().unwrap();
         std::fs::write(
             auth_dir.join("auth.json"),
@@ -3749,22 +3707,6 @@ mod tests {
     fn test_resolve_anthropic_messages_url_appends_messages_path_for_prefix_base() {
         let url = resolve_anthropic_messages_url("http://127.0.0.1:3000/api/");
         assert_eq!(url, "http://127.0.0.1:3000/api/v1/messages");
-    }
-
-    #[test]
-    fn test_llm_retry_delay_uses_exponential_backoff() {
-        assert_eq!(llm_retry_delay(1), Duration::from_secs(2));
-        assert_eq!(llm_retry_delay(2), Duration::from_secs(4));
-        assert_eq!(llm_retry_delay(3), Duration::from_secs(8));
-    }
-
-    #[test]
-    fn test_should_retry_llm_status_for_rate_limits_and_server_errors() {
-        assert!(should_retry_llm_status(
-            reqwest::StatusCode::TOO_MANY_REQUESTS
-        ));
-        assert!(should_retry_llm_status(reqwest::StatusCode::BAD_GATEWAY));
-        assert!(!should_retry_llm_status(reqwest::StatusCode::BAD_REQUEST));
     }
 
     #[test]

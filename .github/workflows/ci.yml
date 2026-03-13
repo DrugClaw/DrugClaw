@@ -52,6 +52,8 @@ jobs:
           toolchain: 1.93.1
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - run: rustup target add x86_64-apple-darwin
+      - run: cargo check --target x86_64-apple-darwin
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 

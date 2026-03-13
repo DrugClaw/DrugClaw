@@ -6,9 +6,7 @@ use serde::Serialize;
 
 use crate::config::{Config, SandboxBackend, SandboxMode};
 use crate::mcp::McpConfig;
-use drugclaw_tools::sandbox::{
-    runtime_available_for_backend, selected_runtime_cli, DEFAULT_SANDBOX_IMAGE,
-};
+use drugclaw_tools::sandbox::{runtime_available_for_backend, selected_runtime_cli};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -448,7 +446,7 @@ fn check_config(report: &mut DoctorReport) {
             "Config file",
             CheckStatus::Fail,
             err.to_string(),
-            Some("Fix MICROCLAW_CONFIG or create a valid config file.".to_string()),
+            Some("Fix DRUGCLAW_CONFIG or create a valid config file.".to_string()),
         ),
     }
 }
@@ -1098,7 +1096,7 @@ fn check_sandbox_image(report: &mut DoctorReport) {
             "Sandbox image",
             CheckStatus::Warn,
             "sandbox.image is empty".to_string(),
-            Some(default_sandbox_image_hint()),
+            Some("Set sandbox.image to a valid image tag (for example: ubuntu:25.10).".to_string()),
         );
         return;
     }
@@ -1109,10 +1107,7 @@ fn check_sandbox_image(report: &mut DoctorReport) {
             "Sandbox image",
             CheckStatus::Warn,
             format!("image={image} (container runtime unavailable, skipped image check)"),
-            Some(
-                "Install/start Docker or Podman, then build or pull the configured image."
-                    .to_string(),
-            ),
+            Some("Install/start Docker or Podman, then pull the configured image.".to_string()),
         );
         return;
     };
@@ -1132,29 +1127,15 @@ fn check_sandbox_image(report: &mut DoctorReport) {
             "Sandbox image",
             CheckStatus::Warn,
             format!("{image} is not present locally"),
-            Some(sandbox_image_ready_hint(cli, image)),
+            Some(format!("Pull image: `{cli} pull {image}`")),
         ),
         Err(err) => report.push(
             "sandbox.image",
             "Sandbox image",
             CheckStatus::Warn,
             format!("failed to check image '{image}': {err}"),
-            Some(sandbox_image_ready_hint(cli, image)),
+            Some(format!("Pull image manually: `{cli} pull {image}`")),
         ),
-    }
-}
-
-fn default_sandbox_image_hint() -> String {
-    format!(
-        "Build the bundled science image: `docker build -f docker/drug-sandbox.Dockerfile -t {DEFAULT_SANDBOX_IMAGE} .`"
-    )
-}
-
-fn sandbox_image_ready_hint(cli: &str, image: &str) -> String {
-    if image == DEFAULT_SANDBOX_IMAGE {
-        default_sandbox_image_hint()
-    } else {
-        format!("Pull image: `{cli} pull {image}`")
     }
 }
 
@@ -1461,9 +1442,9 @@ mod tests {
         ));
         let cfg = Config::test_defaults();
         cfg.save_yaml(path.to_string_lossy().as_ref()).unwrap();
-        std::env::set_var("MICROCLAW_CONFIG", &path);
+        std::env::set_var("DRUGCLAW_CONFIG", &path);
         let report = build_sandbox_report();
-        std::env::remove_var("MICROCLAW_CONFIG");
+        std::env::remove_var("DRUGCLAW_CONFIG");
         let _ = std::fs::remove_file(path);
         assert!(report.checks.iter().any(|c| c.id == "sandbox.mode"));
     }
@@ -1481,11 +1462,11 @@ mod tests {
         cfg.web_fetch_url_validation.enabled = true;
         cfg.web_fetch_url_validation.denylist_hosts = vec!["example.com".to_string()];
         cfg.save_yaml(path.to_string_lossy().as_ref()).unwrap();
-        std::env::set_var("MICROCLAW_CONFIG", &path);
+        std::env::set_var("DRUGCLAW_CONFIG", &path);
 
         let report = build_report();
 
-        std::env::remove_var("MICROCLAW_CONFIG");
+        std::env::remove_var("DRUGCLAW_CONFIG");
         let _ = std::fs::remove_file(path);
 
         assert!(report
@@ -1506,11 +1487,11 @@ mod tests {
         cfg.web_fetch_url_validation.feed_sync.enabled = true;
         cfg.web_fetch_url_validation.feed_sync.sources.clear();
         cfg.save_yaml(path.to_string_lossy().as_ref()).unwrap();
-        std::env::set_var("MICROCLAW_CONFIG", &path);
+        std::env::set_var("DRUGCLAW_CONFIG", &path);
 
         let report = build_report();
 
-        std::env::remove_var("MICROCLAW_CONFIG");
+        std::env::remove_var("DRUGCLAW_CONFIG");
         let _ = std::fs::remove_file(path);
 
         let check = report
@@ -1541,11 +1522,11 @@ mod tests {
                 timeout_secs: 5,
             }];
         cfg.save_yaml(path.to_string_lossy().as_ref()).unwrap();
-        std::env::set_var("MICROCLAW_CONFIG", &path);
+        std::env::set_var("DRUGCLAW_CONFIG", &path);
 
         let report = build_report();
 
-        std::env::remove_var("MICROCLAW_CONFIG");
+        std::env::remove_var("DRUGCLAW_CONFIG");
         let _ = std::fs::remove_file(path);
 
         let check = report

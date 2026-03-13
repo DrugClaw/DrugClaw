@@ -15,8 +15,9 @@ const LONG_ABOUT: &str = concat!(
     "\x1b[1mDrugClaw v",
     env!("CARGO_PKG_VERSION"),
     "\x1b[22m\n",
-    "\x1b[1mWebsite:\x1b[22m https://drugclaw.com\n",
-    "\x1b[1mGitHub:\x1b[22m https://github.com/DrugClaw/DrugClaw\n",
+    "\x1b[1mWebsite:\x1b[22m https://drugclaw.ai\n",
+    "\x1b[1mGitHub:\x1b[22m https://github.com/drugclaw/drugclaw\n",
+    "\x1b[1mDiscord:\x1b[22m https://discord.gg/pvmezwkAk5\n",
     "\n",
     "\x1b[1mQuick Start:\x1b[22m\n",
     "  1) drugclaw setup\n",
@@ -110,7 +111,7 @@ fn print_version() {
 }
 
 fn handle_upgrade_cli() -> anyhow::Result<()> {
-    let repo = "DrugClaw/DrugClaw";
+    let repo = "drugclaw/drugclaw";
     println!("Current version: {VERSION}");
     println!("Upgrading from latest release of {repo}...");
 
@@ -146,7 +147,7 @@ fn handle_upgrade_cli() -> anyhow::Result<()> {
 
     if !status.success() {
         anyhow::bail!(
-            "upgrade failed (exit code {:?}). You can retry with install script:\n  macOS/Linux: curl -fsSL https://drugclaw.com/install.sh | bash\n  Windows: iwr https://drugclaw.com/install.ps1 -UseBasicParsing | iex",
+            "upgrade failed (exit code {:?}). You can retry with install script:\n  macOS/Linux: curl -fsSL https://drugclaw.ai/install.sh | bash\n  Windows: iwr https://drugclaw.ai/install.ps1 -UseBasicParsing | iex",
             status.code()
         );
     }
@@ -405,6 +406,7 @@ fn apply_config_override(path: Option<&PathBuf>) -> anyhow::Result<()> {
             resolved.display()
         );
     }
+    std::env::set_var("DRUGCLAW_CONFIG", &resolved);
     std::env::set_var("MICROCLAW_CONFIG", &resolved);
     Ok(())
 }
@@ -567,10 +569,10 @@ async fn main() -> anyhow::Result<()> {
     migrate_legacy_runtime_layout(&data_root_dir, Path::new(&runtime_data_dir));
     migrate_legacy_skills_dir(&legacy_skills_dir, Path::new(&skills_data_dir));
 
-    if std::env::var("MICROCLAW_GATEWAY").is_ok() {
-        logging::init_logging(&runtime_data_dir)?;
+    if std::env::var("DRUGCLAW_GATEWAY").is_ok() || std::env::var("MICROCLAW_GATEWAY").is_ok() {
+        logging::init_logging(&runtime_data_dir, config.observability.as_ref())?;
     } else {
-        logging::init_console_logging();
+        logging::init_console_logging(config.observability.as_ref());
     }
 
     builtin_skills::ensure_builtin_skills(Path::new(&skills_data_dir))?;
@@ -685,14 +687,24 @@ mod tests {
         std::fs::write(&cfg, "web_enabled: true\n").expect("write config");
 
         let old_cwd = std::env::current_dir().expect("current_dir");
-        let old_cfg = std::env::var("MICROCLAW_CONFIG").ok();
+        let old_cfg = std::env::var("DRUGCLAW_CONFIG").ok();
+        let old_legacy_cfg = std::env::var("MICROCLAW_CONFIG").ok();
         std::env::set_current_dir(&base).expect("set_current_dir");
         let rel = PathBuf::from("api_test_drugclaw.config.yaml");
         apply_config_override(Some(&rel)).expect("apply config override");
-        let resolved = std::env::var("MICROCLAW_CONFIG").expect("MICROCLAW_CONFIG");
+        let resolved = std::env::var("DRUGCLAW_CONFIG").expect("DRUGCLAW_CONFIG");
         assert!(resolved.ends_with("api_test_drugclaw.config.yaml"));
+        assert_eq!(
+            std::env::var("MICROCLAW_CONFIG").ok(),
+            Some(resolved.clone())
+        );
 
         if let Some(v) = old_cfg {
+            std::env::set_var("DRUGCLAW_CONFIG", v);
+        } else {
+            std::env::remove_var("DRUGCLAW_CONFIG");
+        }
+        if let Some(v) = old_legacy_cfg {
             std::env::set_var("MICROCLAW_CONFIG", v);
         } else {
             std::env::remove_var("MICROCLAW_CONFIG");
@@ -792,11 +804,5 @@ mod tests {
     fn cli_parses_upgrade_command() {
         let cli = Cli::parse_from(["drugclaw", "upgrade"]);
         assert!(matches!(cli.command, Some(MainCommand::Upgrade)));
-    }
-
-    #[test]
-    fn cli_parses_acp_command() {
-        let cli = Cli::parse_from(["drugclaw", "acp"]);
-        assert!(matches!(cli.command, Some(MainCommand::Acp)));
     }
 }

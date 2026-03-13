@@ -1,38 +1,56 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use drugclaw_observability::logs::OtlpLogExporter;
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+use opentelemetry_sdk::logs::{SdkLogger, SdkLoggerProvider};
+use serde_yaml::Value;
 use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tracing_subscriber::fmt::writer::MakeWriter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 pub const LOG_FILE_PREFIX: &str = "drugclaw-";
 pub const LOG_FILE_SUFFIX: &str = ".log";
 pub const LOG_RETENTION_DAYS: i64 = 30;
+static OTEL_LOG_EXPORTER: OnceLock<Arc<OtlpLogExporter>> = OnceLock::new();
 
-pub fn init_logging(runtime_data_dir: &str) -> Result<()> {
+pub fn init_logging(runtime_data_dir: &str, observability: Option<&Value>) -> Result<()> {
     let log_dir = PathBuf::from(runtime_data_dir).join("logs");
     fs::create_dir_all(&log_dir)
         .with_context(|| format!("Failed to create log directory: {}", log_dir.display()))?;
     cleanup_old_logs(&log_dir, Utc::now(), LOG_RETENTION_DAYS)?;
 
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     let writer = HourlyLogWriter::new(log_dir, LOG_RETENTION_DAYS)?;
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+    let fmt_layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
-        .with_writer(writer)
-        .init();
+        .with_writer(writer);
+    let otel_layer = build_otel_log_layer(observability);
+    if let Some(otel_layer) = otel_layer {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer)
+            .with(otel_layer)
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer)
+            .init();
+    }
 
     Ok(())
 }
 
-pub fn init_console_logging() {
+pub fn init_console_logging(observability: Option<&Value>) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let otel_layer = build_otel_log_layer(observability);
 
     #[cfg(feature = "journald")]
     {
@@ -41,18 +59,45 @@ pub fn init_console_logging() {
 
         if use_journald {
             if let Ok(journald_layer) = tracing_journald::layer() {
-                use tracing_subscriber::layer::SubscriberExt;
-                use tracing_subscriber::util::SubscriberInitExt;
-                tracing_subscriber::registry()
-                    .with(filter)
-                    .with(journald_layer)
-                    .init();
+                if let Some(otel_layer) = otel_layer {
+                    tracing_subscriber::registry()
+                        .with(filter)
+                        .with(journald_layer)
+                        .with(otel_layer)
+                        .init();
+                } else {
+                    tracing_subscriber::registry()
+                        .with(filter)
+                        .with(journald_layer)
+                        .init();
+                }
                 return;
             }
         }
     }
 
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    let fmt_layer = tracing_subscriber::fmt::layer();
+    if let Some(otel_layer) = otel_layer {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer)
+            .with(otel_layer)
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer)
+            .init();
+    }
+}
+
+fn build_otel_log_layer(
+    observability: Option<&Value>,
+) -> Option<OpenTelemetryTracingBridge<SdkLoggerProvider, SdkLogger>> {
+    let exporter = OtlpLogExporter::from_observability(observability)?;
+    let exporter = OTEL_LOG_EXPORTER.get_or_init(|| exporter.clone());
+    let provider = exporter.logger_provider();
+    Some(OpenTelemetryTracingBridge::new(provider.as_ref()))
 }
 
 #[derive(Debug)]

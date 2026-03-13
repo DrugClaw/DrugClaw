@@ -52,34 +52,6 @@ working_dir_isolation: "chat"
 # IANA timezone for scheduling (e.g. "US/Eastern", "Europe/London")
 timezone: "UTC"
 
-# Optional sandbox for bash tool execution.
-# The installer will try to build the default science image automatically when
-# Docker is installed and the daemon is reachable.
-# For the bundled science + docking stack, build:
-#   docker build -f docker/drug-sandbox.Dockerfile -t drugclaw-drug-sandbox:latest .
-# Then uncomment below.
-# sandbox:
-#   mode: "all"
-#   backend: "auto"
-#   image: "drugclaw-drug-sandbox:latest"
-#   security_profile: "standard"
-#   no_network: false
-#   require_runtime: true
-# This unified image already includes docking dependencies such as Open Babel,
-# AutoDock Vina, OpenMM, and PDBFixer.
-# Older configs that still reference `drugclaw-drug-sandbox-docking:latest`
-# can be supported by tagging the same image with that legacy name.
-# The bundled docking workflow template is under:
-#   skills/science/docking-tools/templates/docking_workflow.py
-# To enable `source: "drugbank"` in the docking workflow, add a local DrugBank export path
-# inside the manifest `settings`, for example:
-#   "drugbank_catalog": "~/data/drugbank_export.csv"
-# Or configure online lookup:
-#   "drugbank_api_key": "..."
-#   "drugbank_api_base_url": "https://api.drugbank.com/discovery/v1"
-# You can also prefer environment variables such as DRUGBANK_API_KEY / DRUGBANK_API_TOKEN
-# so secrets do not land in a checked-in manifest.
-
 # OpenAI API key for voice transcription via Whisper (optional)
 # openai_api_key: ""
 
@@ -99,6 +71,44 @@ compact_keep_recent: 20
 # In group/server/channel chats, slash commands require @mention by default.
 # Set true to allow slash commands without mention in those contexts.
 # allow_group_slash_without_mention: false
+
+# Observability / Monitoring (OpenTelemetry + adapters)
+# observability:
+#   # Shared OpenTelemetry resource attributes
+#   service_name: "drugclaw"
+#
+#   # Optional shared OTLP HTTP headers
+#   # otlp_headers:
+#   #   x-tenant-id: "tenant-a"
+#   #   authorization: "Bearer <token>"
+#
+#   # Metrics export
+#   otlp_enabled: false
+#   otlp_endpoint: "http://127.0.0.1:4318/v1/metrics"
+#   # Export interval for metrics reader
+#   otlp_export_interval_seconds: 15
+#
+#   # Traces export (explicit endpoint mode)
+#   otlp_tracing_enabled: false
+#   otlp_tracing_endpoint: "http://127.0.0.1:4318/v1/traces"
+#   # Optional queue tuning for high-throughput tracing
+#   # otlp_tracing_max_queue_size: 8192
+#   # otlp_tracing_max_export_batch_size: 512
+#   # otlp_tracing_scheduled_delay_ms: 1000
+#
+#   # Logs export (tracing events -> OTLP via opentelemetry-appender-tracing)
+#   otlp_logs_enabled: false
+#   otlp_logs_endpoint: "http://127.0.0.1:4318/v1/logs"
+#
+#   # Adapter mode: Langfuse (auto-build trace endpoint + Basic auth header)
+#   # langfuse_host: "https://cloud.langfuse.com" # or "http://127.0.0.1:3000" for self-hosted
+#   # IMPORTANT: use host root only, do not use UI project URL like /project/<id>/traces
+#   # langfuse_public_key: "pk-lf-..."
+#   # langfuse_secret_key: "sk-lf-..."
+#
+#   # Adapter mode: AgentOps (Bearer auth; can override endpoint)
+#   # agentops_api_key: "<agentops-api-key>"
+#   # agentops_otlp_endpoint: "https://otlp.agentops.ai/v1/traces"
 
 channels:
   web:

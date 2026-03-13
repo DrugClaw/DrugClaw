@@ -177,6 +177,9 @@ jobs:
         with:
           targets: ${{ matrix.target_triple }}
 
+      - name: Ensure Rust target installed
+        run: rustup target add ${{ matrix.target_triple }}
+
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target_triple }}
 

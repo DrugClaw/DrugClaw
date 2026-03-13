@@ -449,7 +449,9 @@ mod tests {
             .await;
         assert!(result.is_error, "expected error, got: {}", result.content);
         assert_eq!(result.error_type.as_deref(), Some("path_policy_blocked"));
-        assert!(result.content.contains("Command contains absolute /tmp path"));
+        assert!(result
+            .content
+            .contains("Command contains absolute /tmp path"));
         assert!(!work.join("shared/tmp/from_tmp_alias.txt").exists());
 
         let _ = std::fs::remove_dir_all(&root);

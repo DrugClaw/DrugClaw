@@ -38,6 +38,9 @@ use crate::skills::SkillManager;
 use crate::tools::ToolRegistry;
 use crate::web::WebAdapter;
 use drugclaw_channels::channel_adapter::ChannelRegistry;
+use drugclaw_observability::logs::OtlpLogExporter;
+use drugclaw_observability::metrics::OtlpMetricExporter;
+use drugclaw_observability::traces::OtlpTraceExporter;
 use drugclaw_storage::db::Database;
 
 pub struct AppState {
@@ -53,6 +56,9 @@ pub struct AppState {
     pub embedding: Option<Arc<dyn EmbeddingProvider>>,
     pub memory_backend: Arc<MemoryBackend>,
     pub tools: ToolRegistry,
+    pub metric_exporter: Option<Arc<OtlpMetricExporter>>,
+    pub trace_exporter: Option<Arc<OtlpTraceExporter>>,
+    pub log_exporter: Option<Arc<OtlpLogExporter>>,
 }
 
 fn prepare_channel_runtimes<T, Build, Register, ModelOverride>(
@@ -424,6 +430,11 @@ pub async fn run(
     }
 
     let hooks = Arc::new(HookManager::from_config(&config).with_db(db.clone()));
+    let llm_provider_overrides = config.llm_provider_overrides();
+
+    let metric_exporter = OtlpMetricExporter::from_observability(config.observability.as_ref());
+    let trace_exporter = OtlpTraceExporter::from_observability(config.observability.as_ref());
+    let log_exporter = OtlpLogExporter::from_observability(config.observability.as_ref());
 
     let state = Arc::new(AppState {
         config,
@@ -433,12 +444,22 @@ pub async fn run(
         skills,
         hooks,
         llm,
-        llm_provider_overrides: Arc::new(RwLock::new(HashMap::new())),
+        llm_provider_overrides: Arc::new(RwLock::new(llm_provider_overrides)),
         llm_model_overrides: Arc::new(RwLock::new(llm_model_overrides)),
         embedding,
         memory_backend,
         tools,
+        metric_exporter,
+        trace_exporter,
+        log_exporter,
     });
+
+    if let Err(err) = state.memory_backend.run_startup_health_check().await {
+        warn!(
+            "Memory backend startup health check failed; SQLite fallback remains enabled. err={}",
+            err
+        );
+    }
 
     crate::scheduler::spawn_scheduler(state.clone());
     crate::scheduler::spawn_reflector(state.clone());

@@ -19,6 +19,9 @@ serde_yaml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-journald = { version = "0.3", optional = true }
+opentelemetry-appender-tracing = "0.30"
+opentelemetry_sdk = "0.30"
+drugclaw-observability = { path = "../drugclaw-observability" }
 
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }

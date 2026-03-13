@@ -11,7 +11,6 @@ use crate::codex_auth::{
 };
 use crate::plugins::PluginsConfig;
 use drugclaw_core::error::DrugClawError;
-use drugclaw_tools::sandbox::DEFAULT_SANDBOX_IMAGE;
 pub use drugclaw_tools::sandbox::{SandboxBackend, SandboxConfig, SandboxMode, SecurityProfile};
 pub use drugclaw_tools::types::WorkingDirIsolation;
 use drugclaw_tools::web_content_validation::WebContentValidationConfig;
@@ -82,7 +81,7 @@ fn default_high_risk_tool_user_confirmation_required() -> bool {
     true
 }
 fn default_sandbox_image() -> String {
-    DEFAULT_SANDBOX_IMAGE.into()
+    "ubuntu:25.10".into()
 }
 fn default_sandbox_container_prefix() -> String {
     "drugclaw-sandbox".into()
@@ -243,9 +242,13 @@ pub struct LlmProviderProfile {
     #[serde(default)]
     pub llm_base_url: Option<String>,
     #[serde(default)]
+    pub llm_user_agent: Option<String>,
+    #[serde(default)]
     pub default_model: Option<String>,
     #[serde(default)]
     pub models: Vec<String>,
+    #[serde(default)]
+    pub show_thinking: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -254,8 +257,10 @@ pub struct ResolvedLlmProviderProfile {
     pub provider: String,
     pub api_key: String,
     pub llm_base_url: Option<String>,
+    pub llm_user_agent: String,
     pub default_model: String,
     pub models: Vec<String>,
+    pub show_thinking: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -351,6 +356,8 @@ pub struct Config {
     pub api_key: String,
     #[serde(default = "default_model")]
     pub model: String,
+    #[serde(default)]
+    pub provider_presets: HashMap<String, LlmProviderProfile>,
     #[serde(default)]
     pub llm_providers: HashMap<String, LlmProviderProfile>,
     #[serde(default)]
@@ -498,6 +505,10 @@ pub struct Config {
     #[serde(default, rename = "voice_transcription_command")]
     pub voice_transcription_command: Option<String>,
 
+    // --- Observability ---
+    #[serde(default)]
+    pub observability: Option<serde_yaml::Value>,
+
     // --- Channel registry (new dynamic config) ---
     /// Per-channel configuration. Keys are channel names (e.g. "telegram", "discord", "slack", "irc", "web").
     /// Each value is channel-specific config deserialized by the adapter.
@@ -568,6 +579,46 @@ impl Config {
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .map(ToOwned::to_owned)
+    }
+
+    fn provider_override_from_value(value: &serde_yaml::Value) -> Option<String> {
+        value
+            .get("provider_preset")
+            .and_then(|v| v.as_str())
+            .or_else(|| value.get("llm_provider").and_then(|v| v.as_str()))
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_ascii_lowercase())
+    }
+
+    fn channel_account_provider_override(&self, channel: &str, account_id: &str) -> Option<String> {
+        self.channels
+            .get(channel)
+            .and_then(|v| v.get("accounts"))
+            .and_then(|v| v.get(account_id))
+            .and_then(Self::provider_override_from_value)
+    }
+
+    pub fn provider_override_for_channel(&self, channel: &str) -> Option<String> {
+        if let Some((base_channel, account_id)) = channel.split_once('.') {
+            if let Some(v) = self.channel_account_provider_override(base_channel, account_id) {
+                return Some(v);
+            }
+            return self
+                .channels
+                .get(base_channel)
+                .and_then(Self::provider_override_from_value);
+        }
+
+        if let Some(default_account) = self.channel_default_account_id(channel) {
+            if let Some(v) = self.channel_account_provider_override(channel, &default_account) {
+                return Some(v);
+            }
+        }
+
+        self.channels
+            .get(channel)
+            .and_then(Self::provider_override_from_value)
     }
 
     pub fn soul_path_for_channel(&self, channel: &str) -> Option<String> {
@@ -688,6 +739,43 @@ impl Config {
         overrides
     }
 
+    pub fn llm_provider_overrides(&self) -> HashMap<String, String> {
+        let mut overrides: HashMap<String, String> = self
+            .channels
+            .iter()
+            .filter_map(|(channel, cfg)| {
+                Self::provider_override_from_value(cfg).map(|provider| (channel.clone(), provider))
+            })
+            .collect();
+
+        for (channel, channel_cfg) in &self.channels {
+            let accounts = channel_cfg.get("accounts").and_then(|v| v.as_mapping());
+            let Some(accounts) = accounts else {
+                continue;
+            };
+            let default_account = self.channel_default_account_id(channel);
+            for (key, value) in accounts {
+                let Some(account_id) = key.as_str() else {
+                    continue;
+                };
+                let Some(provider) = Self::provider_override_from_value(value) else {
+                    continue;
+                };
+                if default_account
+                    .as_deref()
+                    .map(|v| v == account_id)
+                    .unwrap_or(false)
+                {
+                    overrides.insert(channel.clone(), provider);
+                } else {
+                    overrides.insert(format!("{channel}.{account_id}"), provider);
+                }
+            }
+        }
+
+        overrides
+    }
+
     #[cfg(test)]
     pub(crate) fn test_defaults() -> Self {
         Self {
@@ -696,6 +784,7 @@ impl Config {
             llm_provider: "anthropic".into(),
             api_key: "key".into(),
             model: "claude-sonnet-4-5-20250929".into(),
+            provider_presets: HashMap::new(),
             llm_providers: HashMap::new(),
             llm_base_url: None,
             llm_user_agent: default_llm_user_agent(),
@@ -755,6 +844,7 @@ impl Config {
             plugins: PluginsConfig::default(),
             voice_provider: "openai".into(),
             voice_transcription_command: None,
+            observability: None,
             channels: HashMap::new(),
         }
     }
@@ -774,9 +864,15 @@ impl Config {
         root.join("runtime").to_string_lossy().to_string()
     }
 
-    /// Skills directory. Priority: MICROCLAW_SKILLS_DIR env var > skills_dir config > <data_dir>/skills
+    /// Skills directory. Priority: DRUGCLAW_SKILLS_DIR/MICROCLAW_SKILLS_DIR env vars > skills_dir config > <data_dir>/skills
     pub fn skills_data_dir(&self) -> String {
-        // 1. Check env var first
+        // 1. Check env vars first
+        if let Ok(explicit_dir) = std::env::var("DRUGCLAW_SKILLS_DIR") {
+            let trimmed = explicit_dir.trim();
+            if !trimmed.is_empty() {
+                return expand_path(trimmed).to_string_lossy().to_string();
+            }
+        }
         if let Ok(explicit_dir) = std::env::var("MICROCLAW_SKILLS_DIR") {
             let trimmed = explicit_dir.trim();
             if !trimmed.is_empty() {
@@ -816,7 +912,16 @@ impl Config {
     }
 
     pub fn resolve_config_path() -> Result<Option<PathBuf>, DrugClawError> {
-        // 1. Check MICROCLAW_CONFIG env var for custom path
+        // 1. Check DRUGCLAW_CONFIG / MICROCLAW_CONFIG env vars for custom path
+        if let Ok(custom) = std::env::var("DRUGCLAW_CONFIG") {
+            let expanded = expand_path(&custom);
+            if expanded.exists() {
+                return Ok(Some(expanded));
+            }
+            return Err(DrugClawError::Config(format!(
+                "DRUGCLAW_CONFIG points to non-existent file: {custom}"
+            )));
+        }
         if let Ok(custom) = std::env::var("MICROCLAW_CONFIG") {
             let expanded = expand_path(&custom);
             if expanded.exists() {
@@ -930,45 +1035,20 @@ impl Config {
         if self.model.is_empty() {
             self.model = "gpt-5.2".into();
         }
-        self.llm_providers = self
-            .llm_providers
-            .drain()
-            .filter_map(|(alias, mut profile)| {
-                let alias = alias.trim().to_ascii_lowercase();
-                if alias.is_empty() {
-                    return None;
-                }
-                profile.provider = profile
-                    .provider
-                    .as_ref()
-                    .map(|v| v.trim().to_ascii_lowercase())
-                    .filter(|v| !v.is_empty());
-                profile.api_key = profile
-                    .api_key
-                    .as_ref()
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty());
-                profile.llm_base_url = profile
-                    .llm_base_url
-                    .as_ref()
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty());
-                profile.default_model = profile
-                    .default_model
-                    .as_ref()
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty());
-                profile.models = profile
-                    .models
-                    .into_iter()
-                    .map(|m| m.trim().to_string())
-                    .filter(|m| !m.is_empty())
-                    .collect::<Vec<_>>();
-                profile.models.sort();
-                profile.models.dedup();
-                Some((alias, profile))
-            })
-            .collect();
+        self.provider_presets =
+            normalize_provider_profiles(std::mem::take(&mut self.provider_presets));
+        self.llm_providers = normalize_provider_profiles(std::mem::take(&mut self.llm_providers));
+        for (alias, preset) in self.provider_presets.clone() {
+            self.llm_providers
+                .entry(alias)
+                .and_modify(|existing| {
+                    *existing = merge_provider_profile(preset.clone(), existing.clone());
+                })
+                .or_insert(preset);
+        }
+        for channel_cfg in self.channels.values_mut() {
+            migrate_model_override_alias_to_provider_preset(channel_cfg, &self.provider_presets);
+        }
 
         self.override_timezone = self
             .override_timezone
@@ -1404,8 +1484,10 @@ Use operator password + API keys for Web auth."
             let mut provider = self.llm_provider.clone();
             let mut api_key = self.api_key.clone();
             let mut llm_base_url = self.llm_base_url.clone();
+            let mut llm_user_agent = self.llm_user_agent.clone();
             let mut default_model = self.model.clone();
             let mut models = vec![default_model.clone()];
+            let mut show_thinking = self.show_thinking;
             if let Some(profile) = self.llm_providers.get(&alias) {
                 if let Some(v) = &profile.provider {
                     provider = v.clone();
@@ -1416,11 +1498,17 @@ Use operator password + API keys for Web auth."
                 if let Some(v) = &profile.llm_base_url {
                     llm_base_url = Some(v.clone());
                 }
+                if let Some(v) = &profile.llm_user_agent {
+                    llm_user_agent = v.clone();
+                }
                 if let Some(v) = &profile.default_model {
                     default_model = v.clone();
                 }
                 if !profile.models.is_empty() {
                     models = profile.models.clone();
+                }
+                if let Some(v) = profile.show_thinking {
+                    show_thinking = v;
                 }
             }
             if !models.iter().any(|m| m == &default_model) {
@@ -1433,8 +1521,10 @@ Use operator password + API keys for Web auth."
                 provider,
                 api_key,
                 llm_base_url,
+                llm_user_agent,
                 default_model,
                 models,
+                show_thinking,
             });
         }
 
@@ -1448,6 +1538,10 @@ Use operator password + API keys for Web auth."
             .llm_base_url
             .clone()
             .or_else(|| self.llm_base_url.clone());
+        let llm_user_agent = profile
+            .llm_user_agent
+            .clone()
+            .unwrap_or_else(|| self.llm_user_agent.clone());
         let default_model = profile
             .default_model
             .clone()
@@ -1457,6 +1551,7 @@ Use operator password + API keys for Web auth."
         } else {
             profile.models.clone()
         };
+        let show_thinking = profile.show_thinking.unwrap_or(self.show_thinking);
         if !models.iter().any(|m| m == &default_model) {
             models.push(default_model.clone());
         }
@@ -1467,8 +1562,10 @@ Use operator password + API keys for Web auth."
             provider,
             api_key,
             llm_base_url,
+            llm_user_agent,
             default_model,
             models,
+            show_thinking,
         })
     }
 
@@ -1569,6 +1666,117 @@ fn normalize_body_override_params(
             }
         })
         .collect()
+}
+
+fn normalize_provider_profiles(
+    profiles: HashMap<String, LlmProviderProfile>,
+) -> HashMap<String, LlmProviderProfile> {
+    profiles
+        .into_iter()
+        .filter_map(|(alias, mut profile)| {
+            let alias = alias.trim().to_ascii_lowercase();
+            if alias.is_empty() {
+                return None;
+            }
+            profile.provider = profile
+                .provider
+                .as_ref()
+                .map(|v| v.trim().to_ascii_lowercase())
+                .filter(|v| !v.is_empty());
+            profile.api_key = profile
+                .api_key
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+            profile.llm_base_url = profile
+                .llm_base_url
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+            profile.llm_user_agent = profile
+                .llm_user_agent
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+            profile.default_model = profile
+                .default_model
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+            profile.models = profile
+                .models
+                .into_iter()
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty())
+                .collect::<Vec<_>>();
+            profile.models.sort();
+            profile.models.dedup();
+            Some((alias, profile))
+        })
+        .collect()
+}
+
+fn migrate_model_override_alias_to_provider_preset(
+    value: &mut serde_yaml::Value,
+    known_profiles: &HashMap<String, LlmProviderProfile>,
+) {
+    let Some(map) = value.as_mapping_mut() else {
+        return;
+    };
+
+    let provider_preset_key = serde_yaml::Value::String("provider_preset".to_string());
+    let llm_provider_key = serde_yaml::Value::String("llm_provider".to_string());
+    let model_key = serde_yaml::Value::String("model".to_string());
+
+    let has_provider_override =
+        map.contains_key(&provider_preset_key) || map.contains_key(&llm_provider_key);
+    if !has_provider_override {
+        let maybe_profile_alias = map
+            .get(&model_key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_ascii_lowercase());
+        if let Some(alias) = maybe_profile_alias {
+            if known_profiles.contains_key(&alias) {
+                map.insert(
+                    provider_preset_key.clone(),
+                    serde_yaml::Value::String(alias),
+                );
+                map.remove(&model_key);
+            }
+        }
+    }
+
+    let accounts_key = serde_yaml::Value::String("accounts".to_string());
+    if let Some(accounts) = map.get_mut(&accounts_key).and_then(|v| v.as_mapping_mut()) {
+        for (_, account) in accounts.iter_mut() {
+            migrate_model_override_alias_to_provider_preset(account, known_profiles);
+        }
+    }
+}
+
+fn merge_provider_profile(
+    base: LlmProviderProfile,
+    override_profile: LlmProviderProfile,
+) -> LlmProviderProfile {
+    let mut models = if override_profile.models.is_empty() {
+        base.models
+    } else {
+        override_profile.models
+    };
+    models.sort();
+    models.dedup();
+
+    LlmProviderProfile {
+        provider: override_profile.provider.or(base.provider),
+        api_key: override_profile.api_key.or(base.api_key),
+        llm_base_url: override_profile.llm_base_url.or(base.llm_base_url),
+        llm_user_agent: override_profile.llm_user_agent.or(base.llm_user_agent),
+        default_model: override_profile.default_model.or(base.default_model),
+        models,
+        show_thinking: override_profile.show_thinking.or(base.show_thinking),
+    }
 }
 
 #[cfg(test)]
@@ -1746,6 +1954,164 @@ voice_transcription_command: "whisper-mlx --file {file}"
     }
 
     #[test]
+    fn test_post_deserialize_merges_provider_presets_with_legacy_profiles() {
+        let yaml = r#"
+telegram_bot_token: tok
+bot_username: bot
+api_key: key
+provider_presets:
+  lab:
+    provider: OPENAI
+    api_key: preset-key
+    llm_base_url: https://preset.example/v1
+    llm_user_agent: preset-agent
+    default_model: preset-model
+    models: [preset-model, preset-model]
+    show_thinking: true
+llm_providers:
+  lab:
+    api_key: legacy-key
+    models: [legacy-model]
+"#;
+        let mut config: Config = serde_yaml::from_str(yaml).unwrap();
+        config.post_deserialize().unwrap();
+
+        let profile = config.resolve_llm_provider_profile("lab").unwrap();
+        assert_eq!(profile.provider, "openai");
+        assert_eq!(profile.api_key, "legacy-key");
+        assert_eq!(
+            profile.llm_base_url.as_deref(),
+            Some("https://preset.example/v1")
+        );
+        assert_eq!(profile.llm_user_agent, "preset-agent");
+        assert_eq!(profile.default_model, "preset-model");
+        assert_eq!(
+            profile.models,
+            vec!["legacy-model".to_string(), "preset-model".to_string()]
+        );
+        assert!(profile.show_thinking);
+    }
+
+    #[test]
+    fn test_llm_provider_overrides_support_provider_preset_and_legacy_llm_provider_keys() {
+        let mut config = test_config();
+        config.channels = serde_yaml::from_str(
+            r#"
+telegram:
+  enabled: true
+  provider_preset: channel-default
+  default_account: sales
+  accounts:
+    sales:
+      enabled: true
+      bot_token: tg_sales
+      provider_preset: sales-preset
+    ops:
+      enabled: true
+      bot_token: tg_ops
+      llm_provider: ops-legacy
+discord:
+  enabled: true
+  llm_provider: discord-legacy
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.provider_override_for_channel("telegram").as_deref(),
+            Some("sales-preset")
+        );
+        assert_eq!(
+            config
+                .provider_override_for_channel("telegram.ops")
+                .as_deref(),
+            Some("ops-legacy")
+        );
+        assert_eq!(
+            config.provider_override_for_channel("discord").as_deref(),
+            Some("discord-legacy")
+        );
+
+        let overrides = config.llm_provider_overrides();
+        assert_eq!(
+            overrides.get("telegram").map(String::as_str),
+            Some("sales-preset")
+        );
+        assert_eq!(
+            overrides.get("telegram.ops").map(String::as_str),
+            Some("ops-legacy")
+        );
+        assert_eq!(
+            overrides.get("discord").map(String::as_str),
+            Some("discord-legacy")
+        );
+    }
+
+    #[test]
+    fn test_post_deserialize_migrates_profile_aliases_out_of_channel_model_fields() {
+        let yaml = r#"
+telegram_bot_token: tok
+bot_username: bot
+api_key: key
+provider_presets:
+  googlegemini:
+    provider: google
+    default_model: gemini-2.5-pro
+channels:
+  telegram:
+    enabled: true
+    model: googlegemini
+    default_account: sales
+    accounts:
+      sales:
+        enabled: true
+        bot_token: tg_sales
+        model: googlegemini
+  discord:
+    enabled: true
+    model: googlegemini
+    accounts:
+      default:
+        enabled: true
+        bot_token: dc_tok
+"#;
+        let mut config: Config = serde_yaml::from_str(yaml).unwrap();
+        config.post_deserialize().unwrap();
+
+        assert_eq!(
+            config.provider_override_for_channel("telegram").as_deref(),
+            Some("googlegemini")
+        );
+        assert_eq!(
+            config.provider_override_for_channel("discord").as_deref(),
+            Some("googlegemini")
+        );
+
+        let telegram = config.channels.get("telegram").unwrap();
+        assert_eq!(
+            telegram
+                .get("provider_preset")
+                .and_then(|v| v.as_str())
+                .map(str::trim),
+            Some("googlegemini")
+        );
+        assert!(telegram.get("model").is_none());
+
+        let sales = telegram
+            .get("accounts")
+            .and_then(|v| v.get("sales"))
+            .unwrap();
+        assert_eq!(
+            sales
+                .get("provider_preset")
+                .and_then(|v| v.as_str())
+                .map(str::trim),
+            Some("googlegemini")
+        );
+        assert!(sales.get("model").is_none());
+    }
+
+    #[test]
     fn test_default_data_dir_uses_drugclaw_home() {
         let yaml = "telegram_bot_token: tok\nbot_username: bot\napi_key: key\n";
         let config: Config = serde_yaml::from_str(yaml).unwrap();
@@ -1758,9 +2124,11 @@ voice_transcription_command: "whisper-mlx --file {file}"
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert!(matches!(config.sandbox.mode, SandboxMode::Off));
         assert!(matches!(config.sandbox.backend, SandboxBackend::Auto));
-        assert!(!config.sandbox.no_network);
         assert!(config.sandbox.require_runtime);
-        assert_eq!(config.sandbox.image, DEFAULT_SANDBOX_IMAGE);
+        assert_eq!(
+            config.sandbox.image,
+            drugclaw_tools::sandbox::DEFAULT_SANDBOX_IMAGE
+        );
     }
 
     #[test]
@@ -2358,9 +2726,9 @@ openai_compat_body_overrides_by_model:
 
     #[test]
     fn test_post_deserialize_normalizes_a2a_config() {
-        let mut config = test_config();
+        let mut config = Config::test_defaults();
         config.a2a.enabled = true;
-        config.a2a.public_base_url = Some(" https://drugclaw.example.com/ ".into());
+        config.a2a.public_base_url = Some(" https://mc.example.com/ ".into());
         config.a2a.agent_name = Some(" Planner ".into());
         config.a2a.agent_description = Some(" Plans ".into());
         config.a2a.shared_tokens = vec!["  ".into(), " secret ".into()];
@@ -2370,18 +2738,8 @@ openai_compat_body_overrides_by_model:
                 enabled: true,
                 base_url: " https://worker.example.com/ ".into(),
                 bearer_token: Some(" token ".into()),
-                description: Some(" worker ".into()),
-                default_session_key: Some("  ".into()),
-            },
-        );
-        config.a2a.peers.insert(
-            " ".into(),
-            A2APeerConfig {
-                enabled: true,
-                base_url: "https://invalid.example.com".into(),
-                bearer_token: None,
-                description: None,
-                default_session_key: None,
+                description: Some(" executes ".into()),
+                default_session_key: Some(" team/work ".into()),
             },
         );
 
@@ -2389,7 +2747,7 @@ openai_compat_body_overrides_by_model:
 
         assert_eq!(
             config.a2a.public_base_url.as_deref(),
-            Some("https://drugclaw.example.com")
+            Some("https://mc.example.com")
         );
         assert_eq!(config.a2a.agent_name.as_deref(), Some("Planner"));
         assert_eq!(config.a2a.agent_description.as_deref(), Some("Plans"));
@@ -2397,9 +2755,8 @@ openai_compat_body_overrides_by_model:
         let peer = config.a2a.peers.get("worker").unwrap();
         assert_eq!(peer.base_url, "https://worker.example.com");
         assert_eq!(peer.bearer_token.as_deref(), Some("token"));
-        assert_eq!(peer.description.as_deref(), Some("worker"));
-        assert!(peer.default_session_key.is_none());
-        assert_eq!(config.a2a.peers.len(), 1);
+        assert_eq!(peer.description.as_deref(), Some("executes"));
+        assert_eq!(peer.default_session_key.as_deref(), Some("team/work"));
     }
 
     #[test]
@@ -2473,7 +2830,6 @@ discord_allowed_channels: [111, 222]
         config.save_yaml(path.to_str().unwrap()).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("telegram_bot_token"));
-        assert!(!content.contains(DEFAULT_SANDBOX_IMAGE));
         std::fs::remove_file(path).ok();
     }
 

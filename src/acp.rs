@@ -73,6 +73,9 @@ pub async fn serve(
         embedding,
         memory_backend,
         tools,
+        metric_exporter: None,
+        trace_exporter: None,
+        log_exporter: None,
     });
 
     crate::scheduler::spawn_scheduler(app_state.clone());
@@ -145,9 +148,9 @@ impl DrugClawAcpAgent {
         let entry = sessions
             .entry(session_key)
             .and_modify(|state| {
-                state._cwd = cwd.clone();
+                state.cwd = cwd.clone();
             })
-            .or_insert_with(|| SessionState { _cwd: cwd });
+            .or_insert_with(|| SessionState { cwd });
         Ok((chat_id, entry.clone()))
     }
 
@@ -338,7 +341,7 @@ impl Agent for DrugClawAcpAgent {
 
 #[derive(Clone)]
 struct SessionState {
-    _cwd: PathBuf,
+    cwd: PathBuf,
 }
 
 struct OutboundNotification {
@@ -397,10 +400,6 @@ fn available_commands() -> Vec<AvailableCommand> {
         AvailableCommand::new("/reload-skills", "Reload skills from disk."),
         AvailableCommand::new("/archive", "Archive the current session transcript."),
         AvailableCommand::new("/reset", "Clear session state and chat history."),
-        AvailableCommand::new(
-            "/reset memory",
-            "Clear chat memories while keeping session history and tasks.",
-        ),
         AvailableCommand::new("/clear", "Clear session state but keep scheduled tasks."),
         AvailableCommand::new("/stop", "Cancel the active run for this ACP session."),
         AvailableCommand::new("/providers", "List configured providers."),

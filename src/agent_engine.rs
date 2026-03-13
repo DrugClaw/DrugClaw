@@ -4,8 +4,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, info, warn};
 
 use crate::config::ResolvedLlmProviderProfile;
-use crate::embedding::EmbeddingProvider;
 use crate::hooks::HookOutcome;
+use crate::memory_service::{build_db_memory_context, maybe_handle_explicit_memory_command};
 use crate::run_control;
 use crate::runtime::AppState;
 use crate::tools::ToolAuthContext;
@@ -13,8 +13,15 @@ use drugclaw_core::llm_types::{
     ContentBlock, ImageSource, Message, MessageContent, ResponseContentBlock,
 };
 use drugclaw_core::text::floor_char_boundary;
-use drugclaw_storage::db::{call_blocking, Database, StoredMessage};
-use drugclaw_storage::memory_quality;
+use drugclaw_observability::traces::{
+    kv, kv_int, new_span_id, new_trace_id, now_unix_nano, SpanData,
+};
+use drugclaw_storage::db::{call_blocking, StoredMessage};
+use opentelemetry_proto::tonic::trace::v1::Status;
+use opentelemetry_semantic_conventions::attribute::{
+    GEN_AI_OPERATION_NAME, GEN_AI_REQUEST_MODEL, GEN_AI_SYSTEM, GEN_AI_USAGE_INPUT_TOKENS,
+    GEN_AI_USAGE_OUTPUT_TOKENS, USER_ID,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct AgentRequestContext<'a> {
@@ -254,6 +261,8 @@ fn build_provider_runtime_config(
     cfg.llm_provider = profile.provider.clone();
     cfg.api_key = profile.api_key.clone();
     cfg.llm_base_url = profile.llm_base_url.clone();
+    cfg.llm_user_agent = profile.llm_user_agent.clone();
+    cfg.show_thinking = profile.show_thinking;
     cfg.model = model.to_string();
     cfg
 }
@@ -366,7 +375,7 @@ fn is_explicit_user_approval(text: &str) -> bool {
     approval_markers.iter().any(|m| normalized.contains(m))
 }
 
-fn is_slash_command_text(text: &str) -> bool {
+pub(crate) fn is_slash_command_text(text: &str) -> bool {
     text.trim_start().starts_with('/')
 }
 
@@ -434,133 +443,14 @@ fn strip_slash_command_user_lines(messages: &mut Vec<Message>) {
     *messages = filtered;
 }
 
-fn jaccard_similarity_ratio(a: &str, b: &str) -> f64 {
-    use std::collections::HashSet;
-    let a_words: HashSet<&str> = a.split_whitespace().collect();
-    let b_words: HashSet<&str> = b.split_whitespace().collect();
-    let intersection = a_words.intersection(&b_words).count();
-    let union = a_words.len() + b_words.len() - intersection;
-    if union == 0 {
-        1.0
-    } else {
-        intersection as f64 / union as f64
-    }
-}
-
-async fn maybe_handle_explicit_memory_command(
-    state: &AppState,
-    chat_id: i64,
-    override_prompt: Option<&str>,
-    image_data: Option<(String, String)>,
-) -> anyhow::Result<Option<String>> {
-    if override_prompt.is_some() || image_data.is_some() {
-        return Ok(None);
-    }
-
-    let latest_user = call_blocking(state.db.clone(), move |db| {
-        db.get_recent_messages(chat_id, 10)
-    })
-    .await?;
-    let Some(last_user_text) = latest_user
-        .into_iter()
-        .rev()
-        .find(|m| !m.is_from_bot && !is_slash_command_text(&m.content))
-        .map(|m| m.content)
-    else {
-        return Ok(None);
-    };
-
-    let Some(explicit_content) = memory_quality::extract_explicit_memory_command(&last_user_text)
-    else {
-        return Ok(None);
-    };
-    if !memory_quality::memory_quality_ok(&explicit_content) {
-        return Ok(Some(
-            "I skipped saving that memory because it looked too vague. Please send a specific fact.".to_string(),
-        ));
-    }
-
-    let existing = state
-        .memory_backend
-        .get_all_memories_for_chat(Some(chat_id))
-        .await?;
-    let explicit_topic = memory_quality::memory_topic_key(&explicit_content);
-    if let Some(dup) = existing.iter().find(|m| {
-        !m.is_archived
-            && (m.content.eq_ignore_ascii_case(&explicit_content)
-                || jaccard_similarity_ratio(&m.content, &explicit_content) >= 0.55)
-    }) {
-        let memory_id = dup.id;
-        let content_for_update = explicit_content.clone();
-        let _ = state
-            .memory_backend
-            .update_memory_with_metadata(
-                memory_id,
-                &content_for_update,
-                "KNOWLEDGE",
-                0.95,
-                "explicit",
-            )
-            .await;
-        return Ok(Some(format!(
-            "Noted. Updated memory #{memory_id}: {explicit_content}"
-        )));
-    }
-
-    if let Some(conflict) = existing.iter().find(|m| {
-        !m.is_archived
-            && m.category == "KNOWLEDGE"
-            && memory_quality::memory_topic_key(&m.content) == explicit_topic
-            && !m.content.eq_ignore_ascii_case(&explicit_content)
-    }) {
-        let from_id = conflict.id;
-        let new_content = explicit_content.clone();
-        let superseded_id = state
-            .memory_backend
-            .supersede_memory(
-                from_id,
-                &new_content,
-                "KNOWLEDGE",
-                "explicit_conflict",
-                0.95,
-                Some("explicit_topic_conflict"),
-            )
-            .await?;
-        return Ok(Some(format!(
-            "Noted. Superseded memory #{from_id} with #{superseded_id}: {explicit_content}"
-        )));
-    }
-
-    let content_for_insert = explicit_content.clone();
-    let inserted_id = state
-        .memory_backend
-        .insert_memory_with_metadata(
-            Some(chat_id),
-            &content_for_insert,
-            "KNOWLEDGE",
-            "explicit",
-            0.95,
-        )
-        .await?;
-
-    #[cfg(feature = "sqlite-vec")]
-    {
-        if let Some(provider) = &state.embedding {
-            if let Ok(embedding) = provider.embed(&explicit_content).await {
-                let provider_model = provider.model().to_string();
-                let _ = call_blocking(state.db.clone(), move |db| {
-                    db.upsert_memory_vec(inserted_id, &embedding)?;
-                    db.update_memory_embedding_model(inserted_id, &provider_model)?;
-                    Ok(())
-                })
-                .await;
-            }
-        }
-    }
-
-    Ok(Some(format!(
-        "Noted. Saved memory #{inserted_id}: {explicit_content}"
-    )))
+#[derive(Default)]
+struct AgentMetrics {
+    input_tokens: i64,
+    output_tokens: i64,
+    tool_calls: i64,
+    tool_errors: i64,
+    model: String,
+    input_text: String,
 }
 
 pub(crate) async fn process_with_agent_impl(
@@ -569,6 +459,90 @@ pub(crate) async fn process_with_agent_impl(
     override_prompt: Option<&str>,
     image_data: Option<(String, String)>,
     event_tx: Option<&UnboundedSender<AgentEvent>>,
+) -> anyhow::Result<String> {
+    let trace_id = new_trace_id();
+    let root_span_id = new_span_id();
+    let start_time = now_unix_nano();
+    let mut metrics = AgentMetrics::default();
+
+    let result = process_with_agent_logic(
+        state,
+        context,
+        override_prompt,
+        image_data,
+        event_tx,
+        &mut metrics,
+        &trace_id,
+        &root_span_id,
+    )
+    .await;
+
+    if let Some(exp) = &state.trace_exporter {
+        let mut attrs = vec![
+            kv(GEN_AI_OPERATION_NAME, "agent_run"),
+            kv(GEN_AI_SYSTEM, "drugclaw"),
+            kv_int("chat_id", context.chat_id),
+            kv("channel", context.caller_channel),
+            kv(USER_ID, &format!("{}", context.chat_id)),
+            kv(GEN_AI_REQUEST_MODEL, &metrics.model),
+            kv("input", &metrics.input_text),
+            kv_int(GEN_AI_USAGE_INPUT_TOKENS, metrics.input_tokens),
+            kv_int(GEN_AI_USAGE_OUTPUT_TOKENS, metrics.output_tokens),
+            kv_int(
+                "gen_ai.usage.total_tokens",
+                metrics.input_tokens + metrics.output_tokens,
+            ),
+            kv_int("drugclaw.tool_calls", metrics.tool_calls),
+            kv_int("drugclaw.tool_errors", metrics.tool_errors),
+        ];
+
+        let (status, error_msg) = match &result {
+            Ok(_) => (
+                Some(Status {
+                    message: "".to_string(),
+                    code: 1, // Ok
+                }),
+                None,
+            ),
+            Err(e) => (
+                Some(Status {
+                    message: e.to_string(),
+                    code: 2, // Error
+                }),
+                Some(e.to_string()),
+            ),
+        };
+
+        if let Some(msg) = error_msg {
+            attrs.push(kv("error.message", &msg));
+        }
+
+        exp.send_span(SpanData {
+            trace_id,
+            span_id: root_span_id,
+            parent_span_id: vec![],
+            name: "agent_run".to_string(),
+            start_time_unix_nano: start_time,
+            end_time_unix_nano: now_unix_nano(),
+            attributes: attrs,
+            status,
+            kind: 1, // Internal
+        });
+    }
+
+    result
+}
+
+#[expect(clippy::too_many_arguments)]
+async fn process_with_agent_logic(
+    state: &AppState,
+    context: AgentRequestContext<'_>,
+    override_prompt: Option<&str>,
+    image_data: Option<(String, String)>,
+    event_tx: Option<&UnboundedSender<AgentEvent>>,
+    metrics: &mut AgentMetrics,
+    trace_id: &[u8],
+    parent_span_id: &[u8],
 ) -> anyhow::Result<String> {
     let chat_id = context.chat_id;
     let request_start = std::time::Instant::now();
@@ -685,6 +659,9 @@ pub(crate) async fn process_with_agent_impl(
         .find(|m| m.role == "user")
         .map(message_to_text)
         .unwrap_or_default();
+
+    metrics.input_text = latest_user_text_for_approval.clone();
+
     let explicit_user_approval = is_explicit_user_approval(&latest_user_text_for_approval);
 
     // Build system prompt
@@ -694,7 +671,7 @@ pub(crate) async fn process_with_agent_impl(
     let db_memory = build_db_memory_context(
         &state.memory_backend,
         &state.db,
-        &state.embedding,
+        state.embedding.as_ref(),
         chat_id,
         &query,
         state.config.memory_token_budget,
@@ -809,6 +786,7 @@ pub(crate) async fn process_with_agent_impl(
     let mut empty_visible_reply_retry_attempted = false;
     let (effective_profile, effective_model) =
         resolve_effective_provider_and_model(state, context.caller_channel).await;
+    metrics.model = effective_model.clone();
     let scoped_provider = if effective_profile.alias != state.config.llm_provider {
         Some(crate::llm::create_provider(&build_provider_runtime_config(
             state,
@@ -861,6 +839,9 @@ pub(crate) async fn process_with_agent_impl(
                 }
             }
         }
+        let llm_span_id = new_span_id();
+        let llm_start = now_unix_nano();
+
         let response = if let Some(tx) = event_tx {
             let (llm_tx, mut llm_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
             let forward_tx = tx.clone();
@@ -915,7 +896,68 @@ pub(crate) async fn process_with_agent_impl(
                 .await?
         };
 
+        if let Some(exp) = &state.trace_exporter {
+            let mut attrs = vec![
+                kv(GEN_AI_OPERATION_NAME, "chat"),
+                kv(GEN_AI_SYSTEM, &effective_profile.provider),
+                kv(GEN_AI_REQUEST_MODEL, &effective_model),
+            ];
+            // Combine system prompt and messages for input visualization
+            let input_repr = if let Ok(json) = serde_json::to_string(&messages) {
+                if !system_prompt.is_empty() {
+                    format!(
+                        "System: {}\nMessages: {}",
+                        truncate_for_log(&system_prompt, 1000),
+                        truncate_for_log(&json, 9000)
+                    )
+                } else {
+                    truncate_for_log(&json, 10000)
+                }
+            } else {
+                truncate_for_log(&system_prompt, 2000)
+            };
+            attrs.push(kv("input", &input_repr));
+
+            if let Some(usage) = &response.usage {
+                attrs.push(kv_int(GEN_AI_USAGE_INPUT_TOKENS, usage.input_tokens as i64));
+                attrs.push(kv_int(
+                    GEN_AI_USAGE_OUTPUT_TOKENS,
+                    usage.output_tokens as i64,
+                ));
+            }
+            let output_text = response
+                .content
+                .iter()
+                .map(|b| match b {
+                    ResponseContentBlock::Text { text } => text.clone(),
+                    ResponseContentBlock::ToolUse { name, input, .. } => {
+                        format!("[tool_use: {}({})]", name, input)
+                    }
+                    _ => "[other]".to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            attrs.push(kv("output", &output_text));
+
+            exp.send_span(SpanData {
+                trace_id: trace_id.to_vec(),
+                span_id: llm_span_id,
+                parent_span_id: parent_span_id.to_vec(),
+                name: "llm_generation".to_string(),
+                start_time_unix_nano: llm_start,
+                end_time_unix_nano: now_unix_nano(),
+                attributes: attrs,
+                status: Some(Status {
+                    message: "".to_string(),
+                    code: 1,
+                }),
+                kind: 2, // Client/Internal
+            });
+        }
+
         if let Some(usage) = &response.usage {
+            metrics.input_tokens += usage.input_tokens as i64;
+            metrics.output_tokens += usage.output_tokens as i64;
             let channel = context.caller_channel.to_string();
             let provider = effective_profile.alias.clone();
             let model = effective_model.clone();
@@ -1050,7 +1092,7 @@ pub(crate) async fn process_with_agent_impl(
             // Always compute visible text without thinking tags for retry/fallback decisions.
             let visible_text = strip_thinking(&text);
             // Keep raw thinking text only when show_thinking is enabled.
-            let display_text = if state.config.show_thinking {
+            let display_text = if effective_profile.show_thinking {
                 text.clone()
             } else {
                 visible_text.clone()
@@ -1314,10 +1356,53 @@ pub(crate) async fn process_with_agent_impl(
                     );
                     let started = std::time::Instant::now();
                     let mut executed_input = effective_input.clone();
+
+                    let tool_span_id = new_span_id();
+                    let tool_start = now_unix_nano();
+                    metrics.tool_calls += 1;
+
                     let mut result = state
                         .tools
                         .execute_with_auth(name, executed_input.clone(), &tool_auth)
                         .await;
+
+                    if let Some(exp) = &state.trace_exporter {
+                        let mut attrs = vec![
+                            kv("tool.name", name),
+                            kv("input", &executed_input.to_string()),
+                        ];
+                        if result.is_error {
+                            attrs.push(kv(
+                                "error.type",
+                                result.error_type.as_deref().unwrap_or("unknown"),
+                            ));
+                            attrs.push(kv("output", &result.content));
+                        } else {
+                            attrs.push(kv("output", &truncate_for_log(&result.content, 1000)));
+                        }
+
+                        exp.send_span(SpanData {
+                            trace_id: trace_id.to_vec(),
+                            span_id: tool_span_id,
+                            parent_span_id: parent_span_id.to_vec(),
+                            name: "tool_execution".to_string(),
+                            start_time_unix_nano: tool_start,
+                            end_time_unix_nano: now_unix_nano(),
+                            attributes: attrs,
+                            status: if result.is_error {
+                                Some(Status {
+                                    message: result.content.clone(),
+                                    code: 2,
+                                })
+                            } else {
+                                Some(Status {
+                                    message: "".to_string(),
+                                    code: 1,
+                                })
+                            },
+                            kind: 1,
+                        });
+                    }
                     // Auto-retry on approval_required with explicit approval marker.
                     if result.is_error && result.error_type.as_deref() == Some("approval_required")
                     {
@@ -1334,10 +1419,56 @@ pub(crate) async fn process_with_agent_impl(
                             } else {
                                 info!("Auto-retrying tool '{}' after approval gate", name);
                             }
+                            let retry_span_id = new_span_id();
+                            let retry_start = now_unix_nano();
+                            metrics.tool_calls += 1;
+
                             result = state
                                 .tools
                                 .execute_with_auth(name, executed_input.clone(), &tool_auth)
                                 .await;
+
+                            if let Some(exp) = &state.trace_exporter {
+                                let mut attrs = vec![
+                                    kv("tool.name", name),
+                                    kv("input", &executed_input.to_string()),
+                                    kv("is_retry", "true"),
+                                ];
+                                if result.is_error {
+                                    attrs.push(kv(
+                                        "error.type",
+                                        result.error_type.as_deref().unwrap_or("unknown"),
+                                    ));
+                                    attrs.push(kv("output", &result.content));
+                                } else {
+                                    attrs.push(kv(
+                                        "output",
+                                        &truncate_for_log(&result.content, 1000),
+                                    ));
+                                }
+
+                                exp.send_span(SpanData {
+                                    trace_id: trace_id.to_vec(),
+                                    span_id: retry_span_id,
+                                    parent_span_id: parent_span_id.to_vec(),
+                                    name: "tool_execution_retry".to_string(),
+                                    start_time_unix_nano: retry_start,
+                                    end_time_unix_nano: now_unix_nano(),
+                                    attributes: attrs,
+                                    status: if result.is_error {
+                                        Some(Status {
+                                            message: result.content.clone(),
+                                            code: 2,
+                                        })
+                                    } else {
+                                        Some(Status {
+                                            message: "".to_string(),
+                                            code: 1,
+                                        })
+                                    },
+                                    kind: 1,
+                                });
+                            }
                         } else if state.config.high_risk_tool_user_confirmation_required {
                             waiting_for_user_approval = true;
                             waiting_approval_tool = Some(name.clone());
@@ -1467,6 +1598,10 @@ pub(crate) async fn process_with_agent_impl(
                             error_type: result.error_type.clone(),
                         });
                     }
+                    if result.is_error {
+                        metrics.tool_errors += 1;
+                    }
+
                     if name == "send_message" {
                         consecutive_send_message_calls += 1;
                     }
@@ -1583,185 +1718,6 @@ pub(crate) async fn load_messages_from_db(
     }
     let bot_username = state.config.bot_username_for_channel(caller_channel);
     Ok(history_to_claude_messages(&filtered, &bot_username))
-}
-
-fn is_cjk(c: char) -> bool {
-    matches!(
-        c as u32,
-        0x4E00..=0x9FFF
-            | 0x3400..=0x4DBF
-            | 0x20000..=0x2A6DF
-            | 0x2A700..=0x2B73F
-            | 0x2B740..=0x2B81F
-            | 0x2B820..=0x2CEAF
-            | 0xF900..=0xFAFF
-    )
-}
-
-fn tokenize_for_relevance(text: &str) -> std::collections::HashSet<String> {
-    let mut out = std::collections::HashSet::new();
-
-    for token in text
-        .split_whitespace()
-        .map(|w| {
-            w.chars()
-                .filter(|c| c.is_alphanumeric())
-                .collect::<String>()
-                .to_lowercase()
-        })
-        .filter(|w| w.len() > 1)
-    {
-        out.insert(token);
-    }
-
-    let cjk_chars: Vec<char> = text.chars().filter(|c| is_cjk(*c)).collect();
-    if cjk_chars.len() >= 2 {
-        for pair in cjk_chars.windows(2) {
-            let gram: String = pair.iter().collect();
-            out.insert(gram);
-        }
-    } else if cjk_chars.len() == 1 {
-        out.insert(cjk_chars[0].to_string());
-    }
-
-    out
-}
-
-fn score_relevance_with_cache(
-    content: &str,
-    query_tokens: &std::collections::HashSet<String>,
-) -> usize {
-    if query_tokens.is_empty() {
-        return 0;
-    }
-    let content_tokens = tokenize_for_relevance(content);
-    content_tokens
-        .iter()
-        .filter(|t| query_tokens.contains(*t))
-        .count()
-}
-
-pub(crate) async fn build_db_memory_context(
-    memory_backend: &std::sync::Arc<crate::memory_backend::MemoryBackend>,
-    db: &std::sync::Arc<Database>,
-    embedding: &Option<std::sync::Arc<dyn EmbeddingProvider>>,
-    chat_id: i64,
-    query: &str,
-    token_budget: usize,
-) -> String {
-    let memories = match memory_backend.get_memories_for_context(chat_id, 100).await {
-        Ok(m) => m,
-        Err(_) => return String::new(),
-    };
-
-    if memories.is_empty() {
-        return String::new();
-    }
-
-    let mut ordered: Vec<&drugclaw_storage::db::Memory> = Vec::new();
-    #[cfg(feature = "sqlite-vec")]
-    let mut retrieval_method = "keyword";
-    #[cfg(not(feature = "sqlite-vec"))]
-    let retrieval_method = "keyword";
-
-    #[cfg(feature = "sqlite-vec")]
-    {
-        if let Some(provider) = embedding {
-            if memory_backend.prefers_mcp() {
-                // memory backend is external; local sqlite-vec cannot rank remote rows reliably.
-            } else if !query.trim().is_empty() {
-                if let Ok(query_vec) = provider.embed(query).await {
-                    let knn_result = call_blocking(db.clone(), move |db| {
-                        db.knn_memories(chat_id, &query_vec, 20)
-                    })
-                    .await;
-                    if let Ok(knn_rows) = knn_result {
-                        let by_id: std::collections::HashMap<i64, &drugclaw_storage::db::Memory> =
-                            memories.iter().map(|m| (m.id, m)).collect();
-                        for (id, _) in knn_rows {
-                            if let Some(mem) = by_id.get(&id) {
-                                ordered.push(*mem);
-                            }
-                        }
-                        if !ordered.is_empty() {
-                            retrieval_method = "knn";
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[cfg(not(feature = "sqlite-vec"))]
-    {
-        let _ = embedding;
-    }
-
-    if ordered.is_empty() {
-        // Score by relevance to current query; preserve recency for ties.
-        let query_tokens = tokenize_for_relevance(query);
-        let mut scored: Vec<(usize, usize, &drugclaw_storage::db::Memory)> = memories
-            .iter()
-            .enumerate()
-            .map(|(idx, m)| {
-                (
-                    score_relevance_with_cache(&m.content, &query_tokens),
-                    idx,
-                    m,
-                )
-            })
-            .collect();
-        if !query.is_empty() {
-            scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-        }
-        ordered = scored.into_iter().map(|(_, _, m)| m).collect();
-    }
-
-    let mut out = String::from("<structured_memories>\n");
-    let mut used_tokens = 0usize;
-    let mut omitted = 0usize;
-
-    let budget = token_budget.max(1);
-
-    for (idx, m) in ordered.iter().enumerate() {
-        let estimated_tokens = (m.content.len() / 4) + 10;
-        if used_tokens + estimated_tokens > budget {
-            omitted = ordered.len().saturating_sub(idx);
-            break;
-        }
-
-        used_tokens += estimated_tokens;
-        let scope = if m.chat_id.is_none() {
-            "global"
-        } else {
-            "chat"
-        };
-        out.push_str(&format!("[{}] [{}] {}\n", m.category, scope, m.content));
-    }
-    if omitted > 0 {
-        out.push_str(&format!("(+{omitted} memories omitted)\n"));
-    }
-    out.push_str("</structured_memories>\n");
-    let candidate_count = ordered.len();
-    let selected_count = candidate_count.saturating_sub(omitted);
-    let retrieval_method_owned = retrieval_method.to_string();
-    let _ = call_blocking(db.clone(), move |d| {
-        d.log_memory_injection(
-            chat_id,
-            &retrieval_method_owned,
-            candidate_count,
-            selected_count,
-            omitted,
-            used_tokens,
-        )
-        .map(|_| ())
-    })
-    .await;
-    info!(
-        "Memory injection: chat {} -> {} memories, method={}, tokens_est={}, omitted={}",
-        chat_id, selected_count, retrieval_method, used_tokens, omitted
-    );
-    out
 }
 
 /// Load the SOUL.md content for personality customization.
@@ -2057,8 +2013,7 @@ Built-in execution playbook:
 - Apply the same behavior across Telegram/Discord/Web unless a tool returns a channel-specific error.
 - Do not answer with "I can't from this runtime" unless a concrete tool attempt failed in this turn.
 - Always prefer absolute paths for files passed between tools (especially attachment_path).
-- For bash/file tools, treat the current chat working directory as the default workspace. In bash, you already start inside that chat tmp workspace, so prefer relative paths like `file.txt` or `./script.py`.
-- Do not `cd ~/.drugclaw/...` inside bash just to reach the workspace. Do not use absolute `/tmp/...` paths for workspace files. Use relative paths, `$DRUGCLAW_TMP_DIR`, or `$DRUGCLAW_WORKDIR`.
+- For bash/file tools, treat the current chat working directory as the default workspace. Prefer relative paths under that workspace and avoid `/tmp` unless the user explicitly asks for it.
 - For coding tasks, follow this loop: inspect code (`read_file`/`grep`/`glob`) -> edit (`edit_file`/`write_file`) -> validate (`bash` tests/build) -> summarize concrete changes/results.
 - If you will call any tool or activate any skill in this turn, you must start by calling todo_write to create a concise task list before the first tool/skill call.
 - This requirement includes activate_skill: plan the work in todo_write first, then activate and execute.
@@ -2680,6 +2635,9 @@ mod tests {
             embedding: None,
             memory_backend: memory_backend.clone(),
             tools: ToolRegistry::new(&cfg, channel_registry, db, memory_backend),
+            metric_exporter: None,
+            trace_exporter: None,
+            log_exporter: None,
         })
     }
 
@@ -2710,7 +2668,7 @@ mod tests {
             .unwrap();
 
         let memory_backend = Arc::new(crate::memory_backend::MemoryBackend::local_only(db.clone()));
-        let context = build_db_memory_context(&memory_backend, &db, &None, 100, "short", 20).await;
+        let context = build_db_memory_context(&memory_backend, &db, None, 100, "short", 20).await;
         assert!(context.contains("<structured_memories>"));
         assert!(context.contains("(+"));
         assert!(context.contains("memories omitted"));
@@ -2729,7 +2687,7 @@ mod tests {
 
         let memory_backend = Arc::new(crate::memory_backend::MemoryBackend::local_only(db.clone()));
         let context =
-            build_db_memory_context(&memory_backend, &db, &None, 100, "likes", 10_000).await;
+            build_db_memory_context(&memory_backend, &db, None, 100, "likes", 10_000).await;
         assert!(context.contains("user likes rust"));
         assert!(context.contains("user likes coffee"));
         assert!(!context.contains("memories omitted"));
@@ -2747,7 +2705,7 @@ mod tests {
 
         let memory_backend = Arc::new(crate::memory_backend::MemoryBackend::local_only(db.clone()));
         let context =
-            build_db_memory_context(&memory_backend, &db, &None, 100, "喜欢 咖啡", 10_000).await;
+            build_db_memory_context(&memory_backend, &db, None, 100, "喜欢 咖啡", 10_000).await;
         let first_line = context
             .lines()
             .find(|line| line.starts_with('['))
@@ -2822,7 +2780,7 @@ mod tests {
             let recalled = build_db_memory_context(
                 &restarted.memory_backend,
                 &restarted.db,
-                &None,
+                None,
                 chat_id,
                 "database port",
                 1500,
@@ -3360,8 +3318,7 @@ mod tests {
     fn test_build_system_prompt_prefers_chat_working_dir_over_tmp() {
         let prompt = super::build_system_prompt("testbot", "telegram", "", 42, "", "UTC", None);
         assert!(prompt.contains("current chat working directory"));
-        assert!(prompt.contains("Do not `cd ~/.drugclaw/...` inside bash"));
-        assert!(prompt.contains("$DRUGCLAW_TMP_DIR"));
+        assert!(prompt.contains("avoid `/tmp` unless the user explicitly asks for it"));
     }
 
     #[test]
