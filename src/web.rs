@@ -2225,9 +2225,7 @@ mod tests {
     async fn spawn_test_server(
         app: Router,
     ) -> Option<(std::net::SocketAddr, tokio::task::JoinHandle<()>)> {
-        let Some(std_listener) = crate::test_support::bind_test_listener() else {
-            return None;
-        };
+        let std_listener = crate::test_support::bind_test_listener()?;
         std_listener.set_nonblocking(true).unwrap();
         let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
         let addr = listener.local_addr().unwrap();
